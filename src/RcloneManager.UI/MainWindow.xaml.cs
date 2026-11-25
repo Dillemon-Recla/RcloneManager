@@ -2,15 +2,18 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using RcloneManager.Core.Engine;
 using RcloneManager.Core.Models;
+using RcloneManager.Core.Security;
 using RcloneManager.Core.Storage;
 using RcloneManager.UI.Services;
 using WinForms = System.Windows.Forms;
+using WpfInput = System.Windows.Input;
 
 namespace RcloneManager.UI;
 
@@ -34,6 +37,23 @@ public sealed class TransferRowItem
     public string EtaFormatted { get; set; } = string.Empty;
 }
 
+public sealed class RemoteRowItem
+{
+    public string Name { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public string AuthText { get; set; } = string.Empty;
+    public string ParamsSummary { get; set; } = string.Empty;
+    public RcloneRemoteDetail RawRemote { get; set; } = new();
+}
+
+public sealed class ProviderListItem
+{
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public RcloneProviderInfo RawProvider { get; set; } = new();
+    public override string ToString() => $"{Name} — {Description}";
+}
+
 public partial class MainWindow : Window
 {
     private readonly ServiceApiClient _api = new(5580);
@@ -42,6 +62,14 @@ public partial class MainWindow : Window
 
     private List<SyncJob> _cachedJobs = new();
     private List<string> _cachedRemotes = new();
+    private List<RcloneRemoteDetail> _cachedRemoteDetails = new();
+    private List<RcloneProviderInfo> _allProviders = new();
+    private readonly Dictionary<string, Func<string>> _activeRemoteOptionReaders = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _currentRemoteParams = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isEditingExistingRemote;
+    private bool _isUpdatingRemotesGrid;
+    private bool _initialProvidersLoaded;
+    private ServiceStatusDto? _lastStatus;
     private string? _selectedJobId;
     private bool _isClosingForReal;
     private bool _isUpdatingJobsGrid;
@@ -77,6 +105,22 @@ public partial class MainWindow : Window
         var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
         var store = new AppConfigStore(workDir);
         var cfg = store.LoadOrCreateDefault();
+
+        var keyTarget = SensitiveDataProtector.EnsureInitialized(out var keyCreated, cfg.EncryptionKeyTarget);
+        VaultStatusText.Text = keyCreated
+            ? $"Cofre AES-256: Chave gerada ({keyTarget})"
+            : $"Cofre AES-256: Ativo ({keyTarget})";
+
+        if (!cfg.FirstRunCompleted)
+        {
+            FooterInfoText.Text = "Primeira execução detectada — abrindo Assistente Inicial...";
+            var wizard = new FirstRunWizardWindow(workDir)
+            {
+                Owner = this
+            };
+            wizard.ShowDialog();
+            cfg = store.LoadOrCreateDefault();
+        }
 
         PinnedVersionBox.Text = cfg.PinnedRcloneVersion;
         LockVersionCheck.IsChecked = cfg.LockRcloneVersion;
@@ -121,6 +165,7 @@ public partial class MainWindow : Window
             await PollServiceAsync();
             await LoadFilterAnalysisAsync();
             await RefreshRemotesAndAboutAsync();
+            await RefreshRemotesTabDataAsync();
             await RefreshLogsAsync();
         }
 
@@ -138,9 +183,12 @@ public partial class MainWindow : Window
             var status = await _api.GetStatusAsync();
             if (status == null)
             {
+                _lastStatus = null;
                 MarkServiceOffline();
                 return;
             }
+
+            _lastStatus = status;
 
             ServiceStatusDot.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
             ServiceStatusText.Text = $"Serviço Ativo (desde {status.ServiceStartedAt:HH:mm:ss})";
@@ -178,6 +226,9 @@ public partial class MainWindow : Window
             ToggleRcdButton.Content = status.RcDaemonRunning ? "Parar Daemon RC" : "Iniciar Daemon RC";
 
             WindowsStartupCheck.IsChecked = status.StartupWithWindowsEnabled;
+            VaultStatusText.Text = status.EncryptionKeyActive
+                ? $"Cofre AES-256: Ativo ({status.EncryptionKeyTarget})"
+                : "Cofre AES-256: Chave ausente";
             SyncBwComboSelection(status.CurrentBandwidthLimit);
 
             UpdateDashboard(status);
@@ -189,7 +240,10 @@ public partial class MainWindow : Window
             if (!_initialRemotesLoaded)
                 await RefreshRemotesAndAboutAsync();
 
-            if (MainTabs.SelectedIndex == 3)
+            if (!_initialProvidersLoaded && MainTabs.SelectedItem == RemotesTab)
+                await RefreshRemotesTabDataAsync();
+
+            if (MainTabs.SelectedItem == LogsTab)
                 await RefreshLogsAsync();
         }
         catch
@@ -456,7 +510,7 @@ public partial class MainWindow : Window
         {
             await _api.RunJobAsync(_selectedJobId, dryRun: false);
             FooterInfoText.Text = $"Execução iniciada para '{JobNameBox.Text}'.";
-            MainTabs.SelectedIndex = 0;
+            MainTabs.SelectedItem = DashboardTab;
             await PollServiceAsync();
         }
         catch (Exception ex)
@@ -474,7 +528,7 @@ public partial class MainWindow : Window
         {
             await _api.RunJobAsync(_selectedJobId, dryRun: true);
             FooterInfoText.Text = $"Simulação (Dry-Run) iniciada para '{JobNameBox.Text}'. Nenhum arquivo será alterado.";
-            MainTabs.SelectedIndex = 0;
+            MainTabs.SelectedItem = DashboardTab;
             await PollServiceAsync();
         }
         catch (Exception ex)
@@ -1139,6 +1193,953 @@ public partial class MainWindow : Window
         _trayIcon.Dispose();
         _api.Dispose();
     }
+
+    private void Window_PreviewKeyDown(object sender, WpfInput.KeyEventArgs e)
+    {
+        if (WpfInput.Keyboard.Modifiers != WpfInput.ModifierKeys.Control)
+            return;
+
+        if (e.Key == WpfInput.Key.N)
+        {
+            e.Handled = true;
+            MenuNewJob_Click(sender, e);
+        }
+        else if (e.Key == WpfInput.Key.S)
+        {
+            e.Handled = true;
+            MenuSaveCurrent_Click(sender, e);
+        }
+    }
+
+    private void MenuNewJob_Click(object sender, RoutedEventArgs e)
+    {
+        MainTabs.SelectedItem = JobsTab;
+        NewJobButton_Click(sender, e);
+    }
+
+    private void MenuSaveCurrent_Click(object sender, RoutedEventArgs e)
+    {
+        if (MainTabs.SelectedItem == JobsTab)
+        {
+            SaveJobButton_Click(sender, e);
+        }
+        else if (MainTabs.SelectedItem == RemotesTab)
+        {
+            SaveRemoteButton_Click(sender, e);
+        }
+        else if (MainTabs.SelectedItem == FiltersTab)
+        {
+            SaveFilterButton_Click(sender, e);
+        }
+        else
+        {
+            FooterInfoText.Text = "Selecione a aba 'Tarefas & Agendador', 'Remotes' ou 'Filtros' para salvar alterações.";
+        }
+    }
+
+    private void MenuOpenWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        OpenShellTarget(ServiceLauncher.ResolveWorkspaceDirectory());
+    }
+
+    private void MenuOpenConfigFile_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var configPath = Path.Combine(workDir, "rclone_manager_config.json");
+        if (!File.Exists(configPath))
+        {
+            var store = new AppConfigStore(workDir);
+            store.LoadOrCreateDefault();
+        }
+        OpenShellTarget(configPath);
+    }
+
+    private void MenuOpenLogsFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var svcLog = Path.Combine(workDir, "rclone_manager_service.log");
+        var rcloneLog = Path.Combine(workDir, "rclone_backup.log");
+
+        var targetFile = File.Exists(svcLog) ? svcLog : (File.Exists(rcloneLog) ? rcloneLog : null);
+        if (targetFile != null)
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{targetFile}\"",
+                UseShellExecute = true
+            });
+            return;
+        }
+
+        OpenShellTarget(workDir);
+    }
+
+    private async void MenuExportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var store = new AppConfigStore(workDir);
+        var cfg = store.LoadOrCreateDefault();
+
+        using var dialog = new WinForms.SaveFileDialog
+        {
+            Title = "Exportar Configuração Portátil (sem credenciais ou chaves)",
+            Filter = "JSON (*.json)|*.json",
+            FileName = $"rclone_manager_config_{DateTime.Now:yyyyMMdd}.json",
+            InitialDirectory = workDir
+        };
+
+        if (dialog.ShowDialog() != WinForms.DialogResult.OK)
+            return;
+
+        try
+        {
+            List<RcloneRemoteDetail>? remotes = null;
+            try
+            {
+                var details = await _api.GetRemotesDetailsAsync();
+                remotes = details?.Remotes;
+            }
+            catch
+            {
+                if (_cachedRemoteDetails.Count > 0)
+                    remotes = _cachedRemoteDetails;
+            }
+
+            store.ExportPortableConfig(dialog.FileName, cfg, remotes);
+            FooterInfoText.Text = $"Configuração portátil exportada para '{dialog.FileName}'.";
+            System.Windows.MessageBox.Show(
+                $"Configuração exportada para:\n{dialog.FileName}\n\n" +
+                "Por segurança, tokens OAuth, senhas e a chave AES-256 do Windows Credential Manager NÃO foram incluídos.\n" +
+                "Ao importar este arquivo em outra instalação, o Assistente Inicial gerará uma nova chave e conduzirá a autenticação dos serviços apontados.",
+                "Exportação Concluída",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Erro ao exportar configuração: {ex.Message}", "Exportar Configuração", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void MenuImportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        using var dialog = new WinForms.OpenFileDialog
+        {
+            Title = "Importar Configuração pelo Assistente (Wizard)",
+            Filter = "Configuração RcloneManager (*.json)|*.json|Todos os arquivos (*.*)|*.*",
+            InitialDirectory = workDir
+        };
+
+        if (dialog.ShowDialog() != WinForms.DialogResult.OK)
+            return;
+
+        var wizard = new FirstRunWizardWindow(workDir, _api, dialog.FileName)
+        {
+            Owner = this
+        };
+
+        if (wizard.ShowDialog() == true)
+        {
+            _selectedJobId = null;
+            _initialProvidersLoaded = false;
+            await PollServiceAsync();
+            await RefreshRemotesTabDataAsync();
+            await RefreshRemotesAndAboutAsync();
+            FooterInfoText.Text = $"Configuração de '{Path.GetFileName(dialog.FileName)}' importada, autenticada e revisada com nova chave no Cofre do Windows.";
+        }
+    }
+
+    private async void MenuRunWizard_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var wizard = new FirstRunWizardWindow(workDir, _api) { Owner = this };
+        if (wizard.ShowDialog() == true)
+        {
+            await PollServiceAsync();
+            await RefreshRemotesTabDataAsync();
+            await RefreshRemotesAndAboutAsync();
+            FooterInfoText.Text = "Configurações do Assistente Inicial aplicadas.";
+        }
+    }
+
+    private async void MenuResetConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ResetConfigWindow { Owner = this };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        try
+        {
+            var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+            var serviceOnline = _lastStatus is { ServiceRunning: true };
+
+            if (serviceOnline)
+            {
+                await _api.ResetConfigAsync(new ResetConfigRequest
+                {
+                    DeleteCredentialKey = dialog.DeleteCredentialKey,
+                    DeleteLogsAndRuntime = dialog.DeleteLogsAndRuntime,
+                    DeleteRcloneConf = dialog.DeleteRcloneConf
+                });
+            }
+            else
+            {
+                var store = new AppConfigStore(workDir);
+                store.ResetConfig(dialog.DeleteCredentialKey, dialog.DeleteLogsAndRuntime, dialog.DeleteRcloneConf);
+            }
+
+            _selectedJobId = null;
+            _initialProvidersLoaded = false;
+            await PollServiceAsync();
+            await RefreshRemotesTabDataAsync();
+            await RefreshRemotesAndAboutAsync();
+            await RefreshLogsAsync();
+
+            FooterInfoText.Text = "Configurações resetadas com sucesso.";
+
+            if (dialog.ReopenWizard)
+            {
+                var wizard = new FirstRunWizardWindow(workDir, _api) { Owner = this };
+                if (wizard.ShowDialog() == true)
+                {
+                    await PollServiceAsync();
+                    await RefreshRemotesTabDataAsync();
+                    await RefreshRemotesAndAboutAsync();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Erro ao resetar configurações: {ex.Message}", "Resetar Configurações", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void MenuMinimizeToTray_Click(object sender, RoutedEventArgs e)
+    {
+        Hide();
+        _trayIcon.ShowBalloon("RcloneManager", "Minimizado para a bandeja do sistema.");
+    }
+
+    private void MenuCloseUiOnly_Click(object sender, RoutedEventArgs e)
+    {
+        ExitUiKeepingService();
+    }
+
+    private void MenuExitAll_Click(object sender, RoutedEventArgs e)
+    {
+        var confirm = System.Windows.MessageBox.Show(
+            "Isso encerrará a interface e o serviço de agendamento em segundo plano. Continuar?",
+            "Sair do RcloneManager",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (confirm == MessageBoxResult.Yes)
+            ExitUiAndService();
+    }
+
+    private void MenuOpenDocs_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var docsDir = Path.Combine(workDir, "docs");
+        var readme = Path.Combine(workDir, "README.md");
+
+        if (Directory.Exists(docsDir))
+            OpenShellTarget(docsDir);
+        else if (File.Exists(readme))
+            OpenShellTarget(readme);
+        else
+            OpenShellTarget("https://github.com/Dillemon-Recla/RcloneManager");
+    }
+
+    private void MenuOpenGitHub_Click(object sender, RoutedEventArgs e)
+    {
+        OpenShellTarget("https://github.com/Dillemon-Recla/RcloneManager");
+    }
+
+    private void MenuOpenRcloneDocs_Click(object sender, RoutedEventArgs e)
+    {
+        OpenShellTarget("https://rclone.org/docs/");
+    }
+
+    private async void MenuCheckRelease_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var store = new AppConfigStore(workDir);
+        var cfg = store.LoadOrCreateDefault();
+        var check = await RcloneReleaseManager.CheckInstallationAsync(cfg, workDir);
+
+        if (check.NeedsDownload)
+        {
+            MainTabs.SelectedItem = LogsTab;
+            ApplyPinnedReleaseButton_Click(sender, e);
+            return;
+        }
+
+        System.Windows.MessageBox.Show(
+            $"{check.StatusMessage}\n\nCaminho: {check.ExecutablePath}\nVersão Instalada: {check.InstalledVersion}\nRelease Travada: {check.PinnedVersion} ({(check.IsLocked ? "Ativa" : "Livre")})",
+            "Verificação de Release do Rclone",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    private void MenuCopyDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var info = string.Join(Environment.NewLine, new[]
+        {
+            "=== RcloneManager Diagnóstico ===",
+            $"Data/Hora: {DateTime.Now:yyyy-MM-dd HH:mm:ss}",
+            $"Diretório de Trabalho: {workDir}",
+            $"Runtime: {RuntimeInformation.FrameworkDescription}",
+            $"SO: {RuntimeInformation.OSDescription} ({RuntimeInformation.OSArchitecture})",
+            $"Serviço Local: {(_lastStatus != null ? $"Ativo (desde {_lastStatus.ServiceStartedAt:HH:mm:ss})" : "Offline")}",
+            $"Rclone Versão: {_lastStatus?.RcloneVersion ?? "Desconhecida"}",
+            $"Trava Release: {(_lastStatus != null ? $"{_lastStatus.PinnedRcloneVersion} (Lock={_lastStatus.LockRcloneVersion}, Valid={_lastStatus.IsRcloneVersionValid})" : "N/A")}",
+            $"Daemon RC: {(_lastStatus?.RcDaemonRunning == true ? $"Ativo (porta {_lastStatus.RcDaemonPort})" : "Desligado")}",
+            $"Tarefas Configuradas: {_lastStatus?.Jobs.Count ?? _cachedJobs.Count}"
+        });
+
+        System.Windows.Clipboard.SetText(info);
+        FooterInfoText.Text = "Informações de diagnóstico copiadas para a Área de Transferência.";
+    }
+
+    private void MenuAbout_Click(object sender, RoutedEventArgs e)
+    {
+        var about = new AboutWindow(_lastStatus, ServiceLauncher.ResolveWorkspaceDirectory())
+        {
+            Owner = this
+        };
+        about.ShowDialog();
+    }
+
+    private static void OpenShellTarget(string target)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = target,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Não foi possível abrir '{target}': {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    #region Gerenciamento Visual de Remotes (rclone.conf)
+
+    private static readonly HashSet<string> KnownOAuthProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "drive", "onedrive", "dropbox", "box", "google photos", "googlephotos",
+        "pcloud", "yandex", "mailru", "hidrive", "zoho", "jottacloud"
+    };
+
+    private async Task RefreshRemotesTabDataAsync()
+    {
+        try
+        {
+            if (!_initialProvidersLoaded)
+            {
+                var provResp = await _api.GetProvidersAsync();
+                if (provResp != null)
+                {
+                    _allProviders = provResp.Providers;
+                    _initialProvidersLoaded = true;
+                    PopulateProviderCombo(ProviderSearchBox.Text, selectProviderName: _isEditingExistingRemote ? null : "drive");
+                }
+            }
+
+            var detailsResp = await _api.GetRemotesDetailsAsync();
+            if (detailsResp != null)
+            {
+                _cachedRemoteDetails = detailsResp.Remotes;
+                RemoteConfigPathText.Text = string.IsNullOrWhiteSpace(detailsResp.ConfigPath)
+                    ? $"Arquivo: padrão do Rclone | Fonte: {detailsResp.SourceUsed}"
+                    : $"Arquivo: {detailsResp.ConfigPath} | Fonte: {detailsResp.SourceUsed}";
+
+                var rows = _cachedRemoteDetails.Select(r => new RemoteRowItem
+                {
+                    Name = r.Name,
+                    Type = r.Type,
+                    AuthText = r.HasToken ? "OAuth ✓" : "Configurado",
+                    ParamsSummary = string.Join(", ", r.Parameters.Where(kv => kv.Key != "type" && kv.Key != "token").Select(kv => $"{kv.Key}={kv.Value}")),
+                    RawRemote = r
+                }).ToList();
+
+                _isUpdatingRemotesGrid = true;
+                try
+                {
+                    var selectedName = (RemotesGrid.SelectedItem as RemoteRowItem)?.Name;
+                    RemotesGrid.ItemsSource = rows;
+                    if (!string.IsNullOrWhiteSpace(selectedName))
+                    {
+                        var match = rows.FirstOrDefault(x => x.Name.Equals(selectedName, StringComparison.OrdinalIgnoreCase));
+                        if (match != null)
+                            RemotesGrid.SelectedItem = match;
+                    }
+                }
+                finally
+                {
+                    _isUpdatingRemotesGrid = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            RemoteTestResultText.Text = $"Erro ao carregar remotes: {ex.Message}";
+        }
+    }
+
+    private void PopulateProviderCombo(string? filterText, string? selectProviderName = null)
+    {
+        var currentSelected = selectProviderName ?? (RemoteProviderCombo.SelectedItem as ProviderListItem)?.Name;
+        var q = filterText?.Trim() ?? string.Empty;
+
+        var filtered = _allProviders
+            .Where(p => string.IsNullOrEmpty(q) ||
+                        p.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                        p.Description.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .Select(p => new ProviderListItem
+            {
+                Name = p.Name,
+                Description = p.Description,
+                RawProvider = p
+            })
+            .ToList();
+
+        RemoteProviderCombo.ItemsSource = filtered;
+        if (!string.IsNullOrWhiteSpace(currentSelected))
+        {
+            var match = filtered.FirstOrDefault(p => p.Name.Equals(currentSelected, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                RemoteProviderCombo.SelectedItem = match;
+                return;
+            }
+        }
+
+        if (filtered.Count > 0)
+            RemoteProviderCombo.SelectedIndex = 0;
+    }
+
+    private void ProviderSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_isEditingExistingRemote && _allProviders.Count > 0)
+            PopulateProviderCombo(ProviderSearchBox.Text);
+    }
+
+    private void RemotesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingRemotesGrid)
+            return;
+
+        if (RemotesGrid.SelectedItem is not RemoteRowItem row)
+            return;
+
+        _isEditingExistingRemote = true;
+        RemoteEditorTitleText.Text = $"Editar Remote: {row.Name}:";
+        RemoteNameBox.Text = row.Name;
+        RemoteNameBox.IsReadOnly = true;
+        RemoteProviderCombo.IsEnabled = false;
+        ProviderSearchBox.Text = string.Empty;
+
+        _currentRemoteParams = new Dictionary<string, string>(row.RawRemote.Parameters, StringComparer.OrdinalIgnoreCase);
+        RemoteManualTokenBox.Text = string.Empty;
+        SelectRemoteAuthMode(RemoteAuthMode.KeyOrCredentials);
+
+        if (_allProviders.Count > 0)
+            PopulateProviderCombo(string.Empty, row.Type);
+
+        RebuildRemoteOptionsPanel();
+        UpdateRemoteAuthGuidance();
+    }
+
+    private void NewRemoteButton_Click(object sender, RoutedEventArgs e)
+    {
+        _isEditingExistingRemote = false;
+        RemotesGrid.SelectedItem = null;
+        RemoteEditorTitleText.Text = "Criar Novo Remote";
+        RemoteNameBox.Text = string.Empty;
+        RemoteNameBox.IsReadOnly = false;
+        RemoteProviderCombo.IsEnabled = true;
+        RemoteManualTokenBox.Text = string.Empty;
+        _currentRemoteParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (_allProviders.Count > 0)
+            PopulateProviderCombo(ProviderSearchBox.Text, "drive");
+
+        RebuildRemoteOptionsPanel();
+        UpdateRemoteAuthGuidance();
+    }
+
+    private void RemoteProviderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (RemoteProviderCombo.SelectedItem is not ProviderListItem item)
+            return;
+
+        RemoteProviderDescText.Text = $"{item.Name} — {item.Description}";
+        if (!_isEditingExistingRemote)
+        {
+            SelectRemoteAuthMode(KnownOAuthProviders.Contains(item.Name)
+                ? RemoteAuthMode.OAuthBrowserLink
+                : RemoteAuthMode.KeyOrCredentials);
+        }
+
+        RebuildRemoteOptionsPanel();
+        UpdateRemoteAuthGuidance();
+    }
+
+    private void RemoteAuthModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateRemoteAuthGuidance();
+    }
+
+    private RemoteAuthMode GetSelectedRemoteAuthMode()
+    {
+        var tag = (RemoteAuthModeCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        return Enum.TryParse<RemoteAuthMode>(tag, out var parsed)
+            ? parsed
+            : RemoteAuthMode.KeyOrCredentials;
+    }
+
+    private void SelectRemoteAuthMode(RemoteAuthMode mode)
+    {
+        var targetTag = mode.ToString();
+        foreach (ComboBoxItem item in RemoteAuthModeCombo.Items)
+        {
+            if (string.Equals(item.Tag?.ToString(), targetTag, StringComparison.Ordinal))
+            {
+                RemoteAuthModeCombo.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    private void UpdateRemoteAuthGuidance()
+    {
+        if (!IsLoaded)
+            return;
+
+        var providerName = (RemoteProviderCombo.SelectedItem as ProviderListItem)?.Name ?? string.Empty;
+        var mode = GetSelectedRemoteAuthMode();
+
+        DriveClientIdHintBorder.Visibility =
+            providerName.Equals("drive", StringComparison.OrdinalIgnoreCase) && mode == RemoteAuthMode.OAuthBrowserLink
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        ManualTokenPanel.Visibility = mode == RemoteAuthMode.ManualTokenJson
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void OpenDriveClientIdGuide_Click(object sender, RoutedEventArgs e)
+    {
+        OpenShellTarget("https://rclone.org/drive/#making-your-own-client-id");
+    }
+
+    private void GenerateTokenViaAuthorize_Click(object sender, RoutedEventArgs e)
+    {
+        if (RemoteProviderCombo.SelectedItem is not ProviderListItem provItem)
+            return;
+
+        HarvestCurrentRemoteOptions();
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var store = new AppConfigStore(workDir);
+        var cfg = store.LoadOrCreateDefault();
+
+        if (!File.Exists(cfg.RcloneExecutablePath))
+        {
+            System.Windows.MessageBox.Show($"rclone.exe não encontrado em '{cfg.RcloneExecutablePath}'.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var args = $"authorize \"{provItem.Name}\"";
+        if (_currentRemoteParams.TryGetValue("client_id", out var cid) && !string.IsNullOrWhiteSpace(cid) &&
+            _currentRemoteParams.TryGetValue("client_secret", out var csec) && !string.IsNullOrWhiteSpace(csec))
+        {
+            args += $" \"{cid}\" \"{csec}\"";
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/k \"\"{cfg.RcloneExecutablePath}\" {args}\"",
+            WorkingDirectory = Directory.Exists(cfg.WorkingDirectory) ? cfg.WorkingDirectory : workDir,
+            UseShellExecute = true
+        });
+        FooterInfoText.Text = "Janela do 'rclone authorize' aberta. Copie o JSON exibido no terminal e cole no campo de Token Manual.";
+    }
+
+    private void RemoteShowAdvancedCheck_Click(object sender, RoutedEventArgs e)
+    {
+        HarvestCurrentRemoteOptions();
+        RebuildRemoteOptionsPanel();
+    }
+
+    private void HarvestCurrentRemoteOptions()
+    {
+        foreach (var (key, reader) in _activeRemoteOptionReaders)
+        {
+            var val = reader();
+            if (!string.IsNullOrEmpty(val))
+                _currentRemoteParams[key] = val;
+            else
+                _currentRemoteParams.Remove(key);
+        }
+    }
+
+    private void RebuildRemoteOptionsPanel()
+    {
+        _activeRemoteOptionReaders.Clear();
+        RemoteOptionsPanel.Children.Clear();
+
+        if (RemoteProviderCombo.SelectedItem is not ProviderListItem item || item.RawProvider.Options == null)
+            return;
+
+        var showAdvanced = RemoteShowAdvancedCheck.IsChecked == true;
+        var visibleOptions = item.RawProvider.Options
+            .Where(o => o.Hide == 0 && (showAdvanced || !o.Advanced || _currentRemoteParams.ContainsKey(o.Name)))
+            .ToList();
+
+        if (visibleOptions.Count == 0)
+        {
+            RemoteOptionsPanel.Children.Add(new TextBlock
+            {
+                Text = "Este provedor não exige opções básicas adicionais. Marque 'Mostrar opções avançadas' se precisar personalizar parâmetros extras.",
+                Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(148, 163, 184)),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 6, 0, 6)
+            });
+            return;
+        }
+
+        foreach (var opt in visibleOptions)
+        {
+            var block = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            var labelText = opt.Required ? $"{opt.Name} *" : opt.Name;
+            if (opt.Advanced)
+                labelText += " [avançado]";
+
+            block.Children.Add(new TextBlock
+            {
+                Text = labelText,
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 12,
+                Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(248, 250, 252))
+            });
+
+            if (!string.IsNullOrWhiteSpace(opt.Help))
+            {
+                var helpSummary = opt.Help.Replace("\r", "").Split('\n').FirstOrDefault()?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(helpSummary))
+                {
+                    block.Children.Add(new TextBlock
+                    {
+                        Text = helpSummary,
+                        FontSize = 11,
+                        Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(148, 163, 184)),
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, 1, 0, 4)
+                    });
+                }
+            }
+
+            _currentRemoteParams.TryGetValue(opt.Name, out var existingVal);
+
+            if (opt.IsPassword)
+            {
+                var pwdBox = new System.Windows.Controls.PasswordBox
+                {
+                    Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(11, 18, 32)),
+                    Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(248, 250, 252)),
+                    BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(51, 65, 85)),
+                    BorderThickness = new Thickness(1),
+                    Padding = new Thickness(8, 5, 8, 5)
+                };
+                if (!string.IsNullOrWhiteSpace(existingVal))
+                {
+                    block.Children.Add(new TextBlock
+                    {
+                        Text = "(Valor já configurado; deixe em branco para manter o atual)",
+                        FontSize = 10.5,
+                        Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(56, 189, 248)),
+                        Margin = new Thickness(0, 0, 0, 2)
+                    });
+                }
+                block.Children.Add(pwdBox);
+                _activeRemoteOptionReaders[opt.Name] = () => pwdBox.Password;
+            }
+            else
+            {
+                var txtBox = new System.Windows.Controls.TextBox
+                {
+                    Text = existingVal ?? string.Empty,
+                    ToolTip = string.IsNullOrWhiteSpace(opt.DefaultStr) ? null : $"Padrão: {opt.DefaultStr}"
+                };
+
+                if (opt.Examples is { Count: > 0 })
+                {
+                    var examplesCombo = new System.Windows.Controls.ComboBox
+                    {
+                        Margin = new Thickness(0, 0, 0, 4)
+                    };
+                    var items = new List<string> { "(Selecionar opção rápida ou digitar abaixo)" };
+                    items.AddRange(opt.Examples.Select(ex => string.IsNullOrWhiteSpace(ex.Help) ? ex.Value : $"{ex.Value} — {ex.Help}"));
+                    examplesCombo.ItemsSource = items;
+                    examplesCombo.SelectedIndex = 0;
+
+                    var examplesList = opt.Examples;
+                    examplesCombo.SelectionChanged += (_, _) =>
+                    {
+                        var idx = examplesCombo.SelectedIndex - 1;
+                        if (idx >= 0 && idx < examplesList.Count)
+                            txtBox.Text = examplesList[idx].Value;
+                    };
+                    block.Children.Add(examplesCombo);
+                }
+
+                var isFileOption = opt.Name.EndsWith("_file", StringComparison.OrdinalIgnoreCase) ||
+                                   opt.Name.Contains("key_file", StringComparison.OrdinalIgnoreCase) ||
+                                   opt.Name.Contains("cert", StringComparison.OrdinalIgnoreCase);
+
+                if (isFileOption)
+                {
+                    var fileGrid = new Grid();
+                    fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                    Grid.SetColumn(txtBox, 0);
+                    fileGrid.Children.Add(txtBox);
+
+                    var browseBtn = new System.Windows.Controls.Button
+                    {
+                        Content = "Procurar...",
+                        Margin = new Thickness(6, 0, 0, 0)
+                    };
+                    browseBtn.Click += (_, _) =>
+                    {
+                        using var dlg = new WinForms.OpenFileDialog
+                        {
+                            Filter = "Chaves e Certificados (*.json;*.pem;*.key;*.crt)|*.json;*.pem;*.key;*.crt|Todos os arquivos (*.*)|*.*"
+                        };
+                        if (dlg.ShowDialog() == WinForms.DialogResult.OK)
+                            txtBox.Text = dlg.FileName;
+                    };
+                    Grid.SetColumn(browseBtn, 1);
+                    fileGrid.Children.Add(browseBtn);
+                    block.Children.Add(fileGrid);
+                }
+                else
+                {
+                    block.Children.Add(txtBox);
+                }
+                _activeRemoteOptionReaders[opt.Name] = () => txtBox.Text.Trim();
+            }
+
+            RemoteOptionsPanel.Children.Add(block);
+        }
+    }
+
+    private async void SaveRemoteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var remoteName = RemoteNameBox.Text.Trim().TrimEnd(':');
+        if (string.IsNullOrWhiteSpace(remoteName))
+        {
+            System.Windows.MessageBox.Show("Informe um nome para o remote.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (RemoteProviderCombo.SelectedItem is not ProviderListItem provItem)
+        {
+            System.Windows.MessageBox.Show("Selecione o provedor/tipo do remote.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        HarvestCurrentRemoteOptions();
+        var authMode = GetSelectedRemoteAuthMode();
+
+        var req = new CreateOrUpdateRemoteRequest
+        {
+            Name = remoteName,
+            Type = provItem.Name,
+            Parameters = new Dictionary<string, string>(_currentRemoteParams, StringComparer.OrdinalIgnoreCase),
+            IsUpdate = _isEditingExistingRemote,
+            AuthMode = authMode,
+            ManualTokenJson = RemoteManualTokenBox.Text.Trim(),
+            TriggerOAuthBrowser = authMode == RemoteAuthMode.OAuthBrowserLink,
+            ObscurePasswords = true
+        };
+
+        SaveRemoteButton.IsEnabled = false;
+        RemoteSaveStatusText.Text = authMode == RemoteAuthMode.OAuthBrowserLink
+            ? "Executando rclone config e aguardando autenticação OAuth no navegador..."
+            : "Salvando configuração no rclone.conf...";
+
+        try
+        {
+            var resp = await _api.SaveRemoteAsync(req);
+            RemoteSaveStatusText.Text = string.Empty;
+            RemoteTestResultText.Text = resp?.Message ?? $"Remote '{remoteName}:' salvo com sucesso.";
+            FooterInfoText.Text = RemoteTestResultText.Text;
+
+            await RefreshRemotesTabDataAsync();
+            await RefreshRemotesAndAboutAsync();
+        }
+        catch (Exception ex)
+        {
+            RemoteSaveStatusText.Text = $"Erro: {ex.Message}";
+            System.Windows.MessageBox.Show($"Falha ao salvar remote: {ex.Message}", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SaveRemoteButton.IsEnabled = true;
+        }
+    }
+
+    private async void ReconnectRemoteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var name = (RemotesGrid.SelectedItem as RemoteRowItem)?.Name ?? RemoteNameBox.Text.Trim().TrimEnd(':');
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            System.Windows.MessageBox.Show("Selecione um remote na lista para reautenticar.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ReconnectRemoteButton.IsEnabled = false;
+        RemoteSaveStatusText.Text = $"Abrindo navegador para reautenticar '{name}:' via OAuth...";
+        try
+        {
+            var resp = await _api.ReconnectRemoteAsync(name);
+            RemoteSaveStatusText.Text = string.Empty;
+            RemoteTestResultText.Text = resp?.Message ?? $"Reautenticação concluída para '{name}:'.";
+            FooterInfoText.Text = RemoteTestResultText.Text;
+            await RefreshRemotesTabDataAsync();
+        }
+        catch (Exception ex)
+        {
+            RemoteSaveStatusText.Text = string.Empty;
+            System.Windows.MessageBox.Show($"Erro ao reautenticar '{name}:': {ex.Message}", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            ReconnectRemoteButton.IsEnabled = true;
+        }
+    }
+
+    private async void TestRemoteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var name = (RemotesGrid.SelectedItem as RemoteRowItem)?.Name ?? RemoteNameBox.Text.Trim().TrimEnd(':');
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            System.Windows.MessageBox.Show("Selecione um remote na lista para testar.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        TestRemoteButton.IsEnabled = false;
+        RemoteTestResultText.Text = $"Testando conexão com '{name}:'...";
+        try
+        {
+            var res = await _api.TestRemoteAsync(name);
+            if (res == null)
+            {
+                RemoteTestResultText.Text = "Sem resposta do serviço.";
+                return;
+            }
+
+            if (res.Success)
+            {
+                var aboutText = res.About?.Free.HasValue == true
+                    ? $" | Espaço livre: {FormatBytes(res.About.Free.Value)} de {FormatBytes(res.About.Total ?? 0)}"
+                    : string.Empty;
+                RemoteTestResultText.Text = res.Message + aboutText;
+            }
+            else
+            {
+                RemoteTestResultText.Text = $"Falha no teste de '{name}:': {res.Message}";
+            }
+        }
+        catch (Exception ex)
+        {
+            RemoteTestResultText.Text = $"Erro ao testar '{name}:': {ex.Message}";
+        }
+        finally
+        {
+            TestRemoteButton.IsEnabled = true;
+        }
+    }
+
+    private async void DeleteRemoteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var name = (RemotesGrid.SelectedItem as RemoteRowItem)?.Name;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            System.Windows.MessageBox.Show("Selecione um remote na lista para excluir.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Deseja realmente excluir o remote '{name}:' do rclone.conf?\n(Isso não apaga os arquivos na nuvem, apenas remove a configuração local).",
+            "Excluir Remote",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            var resp = await _api.DeleteRemoteAsync(name);
+            RemoteTestResultText.Text = resp?.Message ?? $"Remote '{name}:' removido.";
+            FooterInfoText.Text = RemoteTestResultText.Text;
+            NewRemoteButton_Click(sender, e);
+            await RefreshRemotesTabDataAsync();
+            await RefreshRemotesAndAboutAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Erro ao excluir remote: {ex.Message}", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void RefreshRemotesTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        _initialProvidersLoaded = false;
+        await RefreshRemotesTabDataAsync();
+        await RefreshRemotesAndAboutAsync();
+    }
+
+    private void OpenTerminalConfigButton_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var store = new AppConfigStore(workDir);
+        var cfg = store.LoadOrCreateDefault();
+
+        if (!File.Exists(cfg.RcloneExecutablePath))
+        {
+            System.Windows.MessageBox.Show($"rclone.exe não encontrado em '{cfg.RcloneExecutablePath}'.", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var args = !string.IsNullOrWhiteSpace(cfg.RcloneConfigPath)
+            ? $"config --config \"{cfg.RcloneConfigPath}\""
+            : "config";
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = cfg.RcloneExecutablePath,
+            Arguments = args,
+            WorkingDirectory = Directory.Exists(cfg.WorkingDirectory) ? cfg.WorkingDirectory : workDir,
+            UseShellExecute = true
+        });
+        FooterInfoText.Text = "Terminal interativo 'rclone config' aberto. Clique em 'Atualizar' na aba Remotes após concluir.";
+    }
+
+    #endregion
 
     private static string FormatBytes(long bytes)
     {

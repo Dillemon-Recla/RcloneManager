@@ -2,17 +2,56 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="RcloneManager — Controle Híbrido, Interface &amp; Serviço"
-        Height="780" Width="1180"
+        Height="800" Width="1180"
         MinHeight="640" MinWidth="960"
         Background="{StaticResource BgWindowBrush}"
         WindowStartupLocation="CenterScreen"
+        PreviewKeyDown="Window_PreviewKeyDown"
         Closing="Window_Closing">
-    <Grid Margin="14">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+
+        <!-- BARRA DE MENU CLÁSSICA -->
+        <Menu Grid.Row="0">
+            <MenuItem Header="_Arquivo">
+                <MenuItem Header="Nova Tarefa" InputGestureText="Ctrl+N" Click="MenuNewJob_Click"/>
+                <MenuItem Header="Salvar Alterações da Aba Atual" InputGestureText="Ctrl+S" Click="MenuSaveCurrent_Click"/>
+                <Separator/>
+                <MenuItem Header="Abrir Pasta de Trabalho" Click="MenuOpenWorkspace_Click"/>
+                <MenuItem Header="Abrir rclone_manager_config.json" Click="MenuOpenConfigFile_Click"/>
+                <MenuItem Header="Abrir Pasta de Logs" Click="MenuOpenLogsFolder_Click"/>
+                <Separator/>
+                <MenuItem Header="Exportar Configuração..." Click="MenuExportConfig_Click"/>
+                <MenuItem Header="Importar Configuração..." Click="MenuImportConfig_Click"/>
+                <Separator/>
+                <MenuItem Header="Executar Assistente Inicial (Wizard)..." Click="MenuRunWizard_Click"/>
+                <MenuItem Header="Resetar / Deletar Configurações..." Click="MenuResetConfig_Click"/>
+                <Separator/>
+                <MenuItem Header="Minimizar para a Bandeja" Click="MenuMinimizeToTray_Click"/>
+                <MenuItem Header="Fechar Interface (Manter Serviço)" Click="MenuCloseUiOnly_Click"/>
+                <MenuItem Header="Sair (Encerrar Interface + Serviço)" Click="MenuExitAll_Click"/>
+            </MenuItem>
+            <MenuItem Header="Aj_uda">
+                <MenuItem Header="Abrir Documentação Local (docs/)" Click="MenuOpenDocs_Click"/>
+                <MenuItem Header="Repositório no GitHub" Click="MenuOpenGitHub_Click"/>
+                <MenuItem Header="Documentação Oficial do Rclone" Click="MenuOpenRcloneDocs_Click"/>
+                <Separator/>
+                <MenuItem Header="Verificar Release Travada do Rclone" Click="MenuCheckRelease_Click"/>
+                <MenuItem Header="Copiar Informações de Diagnóstico" Click="MenuCopyDiagnostics_Click"/>
+                <Separator/>
+                <MenuItem Header="Sobre o RcloneManager..." Click="MenuAbout_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <Grid Grid.Row="1" Margin="14">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
         <!-- HEADER -->
         <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
@@ -52,7 +91,7 @@
         <!-- TABS -->
         <TabControl x:Name="MainTabs" Grid.Row="1">
             <!-- ABA 1: DASHBOARD -->
-            <TabItem Header="Dashboard &amp; Ao Vivo">
+            <TabItem x:Name="DashboardTab" Header="Dashboard &amp; Ao Vivo">
                 <Grid Margin="0,10,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -164,7 +203,7 @@
             </TabItem>
 
             <!-- ABA 2: TAREFAS & AGENDADOR -->
-            <TabItem Header="Tarefas &amp; Agendador">
+            <TabItem x:Name="JobsTab" Header="Tarefas &amp; Agendador">
                 <Grid Margin="0,10,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="1.05*"/>
@@ -391,8 +430,156 @@
                 </Grid>
             </TabItem>
 
-            <!-- ABA 3: FILTROS & OTIMIZADOR -->
-            <TabItem Header="Filtros &amp; Otimizador">
+            <!-- ABA 3: REMOTES (rclone.conf) -->
+            <TabItem x:Name="RemotesTab" Header="Remotes (rclone.conf)">
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.05*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="1.25*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- LISTA DE REMOTES -->
+                    <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="Remotes Configurados (rclone.conf)" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock x:Name="RemoteConfigPathText" Grid.Row="1" Text="Arquivo: detectando..." FontSize="11.5"
+                                       Foreground="{StaticResource TextMutedBrush}" TextTrimming="CharacterEllipsis" Margin="0,0,0,10"/>
+
+                            <WrapPanel Grid.Row="2" Margin="0,0,0,10">
+                                <Button x:Name="NewRemoteButton" Content="+ Novo Remote" Style="{StaticResource PrimaryButtonStyle}"
+                                        Click="NewRemoteButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="TestRemoteButton" Content="Testar Conexão" Style="{StaticResource SuccessButtonStyle}"
+                                        Click="TestRemoteButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="ReconnectRemoteButton" Content="Reautenticar (OAuth)"
+                                        Click="ReconnectRemoteButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="DeleteRemoteButton" Content="Excluir" Style="{StaticResource DangerButtonStyle}"
+                                        Click="DeleteRemoteButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="RefreshRemotesTabButton" Content="Atualizar"
+                                        Click="RefreshRemotesTabButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="OpenTerminalConfigButton" Content="Terminal rclone config"
+                                        Click="OpenTerminalConfigButton_Click" Margin="0,0,0,6"/>
+                            </WrapPanel>
+
+                            <DataGrid x:Name="RemotesGrid" Grid.Row="3" SelectionChanged="RemotesGrid_SelectionChanged">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Nome" Binding="{Binding Name}" Width="1.1*"/>
+                                    <DataGridTextColumn Header="Tipo" Binding="{Binding Type}" Width="80"/>
+                                    <DataGridTextColumn Header="Autenticação" Binding="{Binding AuthText}" Width="105"/>
+                                    <DataGridTextColumn Header="Parâmetros" Binding="{Binding ParamsSummary}" Width="1.3*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <Border Grid.Row="4" Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,10,0,0">
+                                <TextBlock x:Name="RemoteTestResultText" Text="Selecione um remote para testar conexão ou editar parâmetros."
+                                           FontSize="12" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap"/>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <!-- ASSISTENTE VISUAL DE CONFIGURAÇÃO -->
+                    <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                                <TextBlock x:Name="RemoteEditorTitleText" Text="Criar Novo Remote" FontSize="14" FontWeight="Bold" Margin="0,0,0,8"/>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition Width="1.4*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Nome do Remote (sem ':')" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <TextBox x:Name="RemoteNameBox" Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Filtrar Provedor" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <TextBox x:Name="ProviderSearchBox" Margin="0,2,0,0" TextChanged="ProviderSearchBox_TextChanged"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="Provedor / Backend (71+ suportados pelo Rclone)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <ComboBox x:Name="RemoteProviderCombo" Margin="0,2,0,8" SelectionChanged="RemoteProviderCombo_SelectionChanged"/>
+
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.4*"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Modo de Autenticação" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <ComboBox x:Name="RemoteAuthModeCombo" Margin="0,2,0,0" SelectionChanged="RemoteAuthModeCombo_SelectionChanged">
+                                            <ComboBoxItem Content="Via Link (Navegador / OAuth)" Tag="OAuthBrowserLink" IsSelected="True"/>
+                                            <ComboBoxItem Content="Via Token JSON Manual" Tag="ManualTokenJson"/>
+                                            <ComboBoxItem Content="Via Chave / Credenciais (Key, Senha ou Service Account)" Tag="KeyOrCredentials"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <CheckBox x:Name="RemoteShowAdvancedCheck" Grid.Column="2" Content="Avançadas"
+                                              VerticalAlignment="Bottom" Margin="0,0,0,6" Click="RemoteShowAdvancedCheck_Click"/>
+                                </Grid>
+
+                                <Border x:Name="DriveClientIdHintBorder" Visibility="Collapsed" Background="#0B1220" BorderBrush="#F59E0B"
+                                        BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,4,0,4">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" FontSize="11" Foreground="#FDE68A" TextWrapping="Wrap" Margin="0,0,8,0"
+                                                   Text="Google Drive: o client_id compartilhado do Rclone está sendo descontinuado em 2026. Recomenda-se preencher client_id + client_secret próprios abaixo."/>
+                                        <Button Grid.Column="1" Content="Guia Oficial" Padding="8,4" VerticalAlignment="Center"
+                                                Click="OpenDriveClientIdGuide_Click"/>
+                                    </Grid>
+                                </Border>
+
+                                <StackPanel x:Name="ManualTokenPanel" Visibility="Collapsed" Margin="0,4,0,2">
+                                    <Grid Margin="0,0,0,4">
+                                        <TextBlock Text="Cole o Token JSON (gerado com rclone authorize)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
+                                        <Button Content="Gerar Token via rclone authorize" HorizontalAlignment="Right" Padding="8,3"
+                                                Click="GenerateTokenViaAuthorize_Click"/>
+                                    </Grid>
+                                    <TextBox x:Name="RemoteManualTokenBox" AcceptsReturn="True" Height="64" FontFamily="Consolas" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Border Grid.Row="1" Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,8">
+                                <TextBlock x:Name="RemoteProviderDescText" Text="Selecione um provedor para carregar as opções oficiais do Rclone."
+                                           FontSize="11.5" Foreground="{StaticResource AccentCyanBrush}" TextWrapping="Wrap"/>
+                            </Border>
+
+                            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="RemoteOptionsPanel" Margin="0,0,8,0"/>
+                            </ScrollViewer>
+
+                            <StackPanel Grid.Row="3" Margin="0,10,0,0">
+                                <TextBlock x:Name="RemoteSaveStatusText" Text="" FontSize="11.5" Foreground="#F59E0B" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                                <Button x:Name="SaveRemoteButton" Content="Salvar Remote (via Rclone)"
+                                        Style="{StaticResource PrimaryButtonStyle}" Height="36" Click="SaveRemoteButton_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ABA 4: FILTROS & OTIMIZADOR -->
+            <TabItem x:Name="FiltersTab" Header="Filtros &amp; Otimizador">
                 <Grid Margin="0,10,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -443,8 +630,8 @@
                 </Grid>
             </TabItem>
 
-            <!-- ABA 4: LOGS & SERVIÇO -->
-            <TabItem Header="Logs &amp; Serviço">
+            <!-- ABA 5: LOGS & SERVIÇO -->
+            <TabItem x:Name="LogsTab" Header="Logs &amp; Serviço">
                 <Grid Margin="0,10,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -466,7 +653,9 @@
                                     <CheckBox x:Name="WindowsStartupCheck" Content="Iniciar Serviço automaticamente com o Windows (HKCU\...\Run)"
                                               Click="WindowsStartupCheck_Click" Margin="0,0,18,4"/>
                                     <TextBlock x:Name="ServiceAdminStatusText" Text="Serviço local em http://127.0.0.1:5580"
-                                               Foreground="{StaticResource TextMutedBrush}" FontSize="12" VerticalAlignment="Center"/>
+                                               Foreground="{StaticResource TextMutedBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,18,4"/>
+                                    <TextBlock x:Name="VaultStatusText" Text="Cofre AES-256: verificando..."
+                                               Foreground="#10B981" FontSize="12" VerticalAlignment="Center" Margin="0,0,0,4"/>
                                 </WrapPanel>
                             </StackPanel>
 
@@ -475,6 +664,8 @@
                                         Style="{StaticResource PrimaryButtonStyle}" Click="ReconnectServiceButton_Click" Margin="0,0,6,0"/>
                                 <Button x:Name="ShutdownServiceButton" Content="Encerrar Serviço"
                                         Style="{StaticResource DangerButtonStyle}" Click="ShutdownServiceButton_Click" Margin="0,0,6,0"/>
+                                <Button Content="Assistente (Wizard)" Click="MenuRunWizard_Click" Margin="0,0,6,0"/>
+                                <Button Content="Resetar Configs" Style="{StaticResource DangerButtonStyle}" Click="MenuResetConfig_Click" Margin="0,0,6,0"/>
                                 <Button x:Name="InstallWindowsServiceButton" Content="Instalar WinService"
                                         Click="InstallWindowsServiceButton_Click" Margin="0,0,6,0"/>
                                 <Button x:Name="UninstallWindowsServiceButton" Content="Remover WinService"
@@ -541,5 +732,6 @@
         <TextBlock x:Name="FooterInfoText" Grid.Row="2" Margin="2,8,2,0" FontSize="11.5"
                    Foreground="{StaticResource TextMutedBrush}"
                    Text="Pronto. O serviço em segundo plano substitui script.bat e rodar.vbs mantendo o agendador ativo mesmo com a janela fechada."/>
+        </Grid>
     </Grid>
 </Window>

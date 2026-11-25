@@ -14,4 +14,8 @@
     <ProjectReference Include="..\RcloneManager.Core\RcloneManager.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Resource Include="..\..\docs\assets\pix-qrcode.png" Link="Assets\pix-qrcode.png" />
+  </ItemGroup>
+
 </Project>

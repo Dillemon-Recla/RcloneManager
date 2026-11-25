@@ -36,6 +36,27 @@ public sealed class StartupToggleResponse
     public bool StartupWithWindowsEnabled { get; set; }
 }
 
+public sealed class RemotesDetailsResponse
+{
+    public List<RcloneRemoteDetail> Remotes { get; set; } = new();
+    public string SourceUsed { get; set; } = string.Empty;
+    public string ConfigPath { get; set; } = string.Empty;
+}
+
+public sealed class ProvidersResponse
+{
+    public List<RcloneProviderInfo> Providers { get; set; } = new();
+    public string SourceUsed { get; set; } = string.Empty;
+}
+
+public sealed class RemoteActionResponse
+{
+    public bool Saved { get; set; }
+    public bool Reconnected { get; set; }
+    public bool Deleted { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
 public sealed class ServiceApiClient : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -46,6 +67,7 @@ public sealed class ServiceApiClient : IDisposable
     };
 
     private readonly HttpClient _http;
+    private readonly HttpClient _longHttp;
 
     public ServiceApiClient(int port = 5580)
     {
@@ -54,6 +76,11 @@ public sealed class ServiceApiClient : IDisposable
         {
             BaseAddress = new Uri(BaseUrl),
             Timeout = TimeSpan.FromSeconds(8)
+        };
+        _longHttp = new HttpClient
+        {
+            BaseAddress = new Uri(BaseUrl),
+            Timeout = TimeSpan.FromMinutes(4)
         };
     }
 
@@ -150,6 +177,24 @@ public sealed class ServiceApiClient : IDisposable
         return await resp.Content.ReadFromJsonAsync<StartupToggleResponse>(JsonOptions, ct);
     }
 
+    public async Task CompleteFirstRunAsync(CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync("/api/service/complete-first-run", null, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    public async Task ReloadServiceConfigAsync(CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync("/api/service/reload", null, ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+    }
+
+    public async Task ResetConfigAsync(ResetConfigRequest req, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsJsonAsync("/api/service/reset", req, JsonOptions, ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+    }
+
     public async Task StopRcdAsync(CancellationToken ct = default)
     {
         using var resp = await _http.PostAsync("/api/rclone/stop-rcd", null, ct);
@@ -168,5 +213,72 @@ public sealed class ServiceApiClient : IDisposable
         resp.EnsureSuccessStatusCode();
     }
 
-    public void Dispose() => _http.Dispose();
+    public async Task<RemotesDetailsResponse?> GetRemotesDetailsAsync(CancellationToken ct = default)
+    {
+        return await _http.GetFromJsonAsync<RemotesDetailsResponse>("/api/remotes/details", JsonOptions, ct);
+    }
+
+    public async Task<ProvidersResponse?> GetProvidersAsync(CancellationToken ct = default)
+    {
+        return await _longHttp.GetFromJsonAsync<ProvidersResponse>("/api/remotes/providers", JsonOptions, ct);
+    }
+
+    public async Task<RemoteActionResponse?> SaveRemoteAsync(CreateOrUpdateRemoteRequest req, CancellationToken ct = default)
+    {
+        using var resp = await _longHttp.PostAsJsonAsync("/api/remotes/save", req, JsonOptions, ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+        return await resp.Content.ReadFromJsonAsync<RemoteActionResponse>(JsonOptions, ct);
+    }
+
+    public async Task<RemoteActionResponse?> ReconnectRemoteAsync(string name, CancellationToken ct = default)
+    {
+        using var resp = await _longHttp.PostAsync($"/api/remotes/{Uri.EscapeDataString(name)}/reconnect", null, ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+        return await resp.Content.ReadFromJsonAsync<RemoteActionResponse>(JsonOptions, ct);
+    }
+
+    public async Task<RemoteTestResult?> TestRemoteAsync(string name, CancellationToken ct = default)
+    {
+        using var resp = await _longHttp.PostAsync($"/api/remotes/{Uri.EscapeDataString(name)}/test", null, ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+        return await resp.Content.ReadFromJsonAsync<RemoteTestResult>(JsonOptions, ct);
+    }
+
+    public async Task<RemoteActionResponse?> DeleteRemoteAsync(string name, CancellationToken ct = default)
+    {
+        using var resp = await _http.DeleteAsync($"/api/remotes/{Uri.EscapeDataString(name)}", ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+        return await resp.Content.ReadFromJsonAsync<RemoteActionResponse>(JsonOptions, ct);
+    }
+
+    private static async Task EnsureSuccessWithDetailAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        if (resp.IsSuccessStatusCode)
+            return;
+
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("error", out var errProp) && !string.IsNullOrWhiteSpace(errProp.GetString()))
+                    throw new InvalidOperationException(errProp.GetString());
+                if (doc.RootElement.TryGetProperty("detail", out var detProp) && !string.IsNullOrWhiteSpace(detProp.GetString()))
+                    throw new InvalidOperationException(detProp.GetString());
+            }
+            catch (JsonException)
+            {
+            }
+            throw new HttpRequestException($"Erro {(int)resp.StatusCode}: {body}");
+        }
+
+        resp.EnsureSuccessStatusCode();
+    }
+
+    public void Dispose()
+    {
+        _http.Dispose();
+        _longHttp.Dispose();
+    }
 }

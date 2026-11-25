@@ -1,0 +1,54 @@
+<Window x:Class="RcloneManager.UI.ResetConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Resetar / Deletar Configurações"
+        Width="540" Height="390"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgWindowBrush}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="Resetar ou Limpar Configurações" FontSize="18" FontWeight="Bold" Foreground="#F8FAFC"/>
+            <TextBlock Text="Escolha exatamente o que deseja apagar. Os dados locais serão reinicializados de forma limpa."
+                       Foreground="{StaticResource TextMutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,14">
+            <StackPanel>
+                <CheckBox IsChecked="True" IsEnabled="False"
+                          Content="Resetar configurações e tarefas do RcloneManager (rclone_manager_config.json)"
+                          Margin="0,0,0,10"/>
+
+                <CheckBox x:Name="DeleteLogsRuntimeCheck" IsChecked="True"
+                          Content="Remover logs locais e arquivos temporários (.rclone-manager-runtime)"
+                          Margin="0,0,0,10"/>
+
+                <CheckBox x:Name="DeleteVaultKeyCheck" IsChecked="False"
+                          Content="Excluir chave 'RcloneManager:MasterKey' do Gerenciador de Credenciais do Windows"
+                          Margin="0,0,0,4"/>
+                <TextBlock Text="Nota: uma nova chave AES-256 será gerada automaticamente no Gerenciador de Credenciais ao reabrir o aplicativo/Wizard."
+                           Foreground="#F59E0B" FontSize="11" Margin="22,0,0,10" TextWrapping="Wrap"/>
+
+                <CheckBox x:Name="DeleteRcloneConfCheck" IsChecked="False"
+                          Content="Apagar também os remotes em rclone.conf (cria backup .bak antes)"
+                          Foreground="#FCA5A5" Margin="0,0,0,12"/>
+
+                <Separator Background="#334155" Margin="0,0,0,10"/>
+
+                <CheckBox x:Name="ReopenWizardCheck" IsChecked="True"
+                          Content="Abrir o Assistente Inicial (Wizard) automaticamente após o reset"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancelar" IsCancel="True" Click="CancelButton_Click" Margin="0,0,8,0"/>
+            <Button Content="Confirmar Reset" Style="{StaticResource DangerButtonStyle}" Click="ConfirmButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,331 @@
+<Window x:Class="RcloneManager.UI.FirstRunWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Assistente Inicial — RcloneManager"
+        Width="760" Height="640"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgWindowBrush}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- HEADER -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="Bem-vindo ao RcloneManager" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC"/>
+            <TextBlock Text="Importe configurações existentes (sem credenciais), gere sua chave no Cofre do Windows, autentique os serviços e revise suas tarefas."
+                       Foreground="{StaticResource TextMutedBrush}" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <!-- INDICADOR DE ETAPAS -->
+        <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border x:Name="Step1Badge" Grid.Column="0" Background="#2563EB" CornerRadius="6" Padding="8,6" Margin="0,0,6,0">
+                <TextBlock Text="1. Importar &amp; Chave" FontSize="11.5" FontWeight="Bold" HorizontalAlignment="Center"/>
+            </Border>
+            <Border x:Name="Step2Badge" Grid.Column="1" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="8,6" Margin="0,0,6,0">
+                <TextBlock Text="2. Release Travada" FontSize="11.5" FontWeight="Bold" HorizontalAlignment="Center"/>
+            </Border>
+            <Border x:Name="Step3Badge" Grid.Column="2" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="8,6" Margin="0,0,6,0">
+                <TextBlock Text="3. Autenticar Serviços" FontSize="11.5" FontWeight="Bold" HorizontalAlignment="Center"/>
+            </Border>
+            <Border x:Name="Step4Badge" Grid.Column="3" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="8,6">
+                <TextBlock Text="4. Revisão &amp; Concluir" FontSize="11.5" FontWeight="Bold" HorizontalAlignment="Center"/>
+            </Border>
+        </Grid>
+
+        <!-- CORPO DAS ETAPAS -->
+        <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,14">
+            <Grid>
+                <!-- ETAPA 1: IMPORTAR CONFIG + NOVA CHAVE AES-256 -->
+                <StackPanel x:Name="Step1Panel" Visibility="Visible">
+                    <TextBlock Text="Importação Opcional &amp; Chave no Cofre do Windows" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+
+                    <!-- CARD IMPORTAÇÃO PORTÁTIL -->
+                    <Border Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                <TextBlock Text="Tem um arquivo de configuração exportado?" FontWeight="Bold" FontSize="13"/>
+                                <TextBlock x:Name="WizardImportSummaryText"
+                                           Text="Opcional: importe tarefas e a lista de serviços usados anteriormente (sem tokens ou chaves). O assistente conduzirá a nova autenticação na Etapa 3."
+                                           Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                            </StackPanel>
+                            <Button x:Name="WizardImportConfigButton" Grid.Column="1" Content="Importar Config (.json)..."
+                                    Style="{StaticResource PrimaryButtonStyle}" VerticalAlignment="Center"
+                                    Click="WizardImportConfigButton_Click"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- CARD CHAVE NO WINDOWS CREDENTIAL MANAGER -->
+                    <Border Background="#0B1220" BorderBrush="#10B981" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                <TextBlock x:Name="VaultStatusTitle" Text="Chave AES-256 no Gerenciador de Credenciais do Windows" FontWeight="Bold" Foreground="#10B981" FontSize="13.5"/>
+                                <TextBlock x:Name="VaultStatusDetail" Text="Target: RcloneManager:MasterKey" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <Button x:Name="WizardRotateKeyButton" Grid.Column="1" Content="Gerar Nova Chave"
+                                    VerticalAlignment="Center" Click="WizardRotateKeyButton_Click"/>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="Modelo de segurança:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBlock Text="• A chave principal AES-256 fica exclusivamente no Gerenciador de Credenciais do Windows e nunca é exportada." Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" Margin="0,0,0,3"/>
+                    <TextBlock Text="• Exportações são portáteis e sem credenciais: contêm apenas tarefas, filtros, release travada e quais serviços precisam de autenticação." Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- ETAPA 2: RELEASE TRAVADA -->
+                <StackPanel x:Name="Step2Panel" Visibility="Collapsed">
+                    <TextBlock Text="Provisionamento &amp; Trava de Release do Rclone" FontSize="16" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <TextBlock Text="O aplicativo mantém o rclone.exe travado na release escolhida e verifica integridade SHA-256 antes de baixar."
+                               Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                            <TextBlock Text="Release Travada" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                            <TextBox x:Name="WizardPinnedVersionBox" Text="v1.76.0" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <CheckBox x:Name="WizardLockVersionCheck" Grid.Column="1" IsChecked="True" VerticalAlignment="Bottom" Margin="0,0,0,6"
+                                  Content="Travar nesta versão (baixar automaticamente se ausente ou divergente)"/>
+                    </Grid>
+
+                    <Border Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,12">
+                        <TextBlock x:Name="WizardReleaseStatusText" Text="Verificando..." FontSize="12" TextWrapping="Wrap"/>
+                    </Border>
+
+                    <Button x:Name="WizardVerifyReleaseButton" Content="Baixar / Verificar Release Agora"
+                            Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Left"
+                            Click="WizardVerifyReleaseButton_Click"/>
+                </StackPanel>
+
+                <!-- ETAPA 3: AUTENTICAR SERVIÇOS APONTADOS / NOVO REMOTE -->
+                <ScrollViewer x:Name="Step3Panel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,0,6,0">
+                        <TextBlock Text="Autenticação dos Serviços / Remotes" FontSize="16" FontWeight="Bold" Margin="0,0,0,6"/>
+
+                        <StackPanel x:Name="WizardImportedRemotesPanel" Visibility="Collapsed" Margin="0,0,0,10">
+                            <TextBlock Text="Serviços apontados na configuração importada (clique para autenticar):" FontSize="11.5"
+                                       Foreground="#FDE68A" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                            <ListBox x:Name="WizardImportedRemotesList" MaxHeight="95"
+                                     Background="#0B1220" Foreground="#F8FAFC" BorderBrush="#334155"
+                                     SelectionChanged="WizardImportedRemotesList_SelectionChanged"/>
+                        </StackPanel>
+
+                        <Border Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,10">
+                            <TextBlock x:Name="WizardExistingRemotesText" Text="Remotes detectados: verificando..." FontSize="11.5" Foreground="#38BDF8" TextWrapping="Wrap"/>
+                        </Border>
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Nome do Remote (sem ':')" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBox x:Name="WizardRemoteNameBox" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Provedor" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <ComboBox x:Name="WizardProviderCombo" Margin="0,2,0,0" SelectionChanged="WizardProviderCombo_SelectionChanged">
+                                    <ComboBoxItem Content="drive — Google Drive" Tag="drive" IsSelected="True"/>
+                                    <ComboBoxItem Content="onedrive — Microsoft OneDrive" Tag="onedrive"/>
+                                    <ComboBoxItem Content="dropbox — Dropbox" Tag="dropbox"/>
+                                    <ComboBoxItem Content="s3 — Amazon S3 / Cloudflare R2 / MinIO" Tag="s3"/>
+                                    <ComboBoxItem Content="sftp — SSH / SFTP" Tag="sftp"/>
+                                    <ComboBoxItem Content="ftp — FTP" Tag="ftp"/>
+                                    <ComboBoxItem Content="smb — Rede Windows (SMB)" Tag="smb"/>
+                                    <ComboBoxItem Content="webdav — WebDAV / Nextcloud" Tag="webdav"/>
+                                    <ComboBoxItem Content="local — Pasta / Disco Local" Tag="local"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Modo de Autenticação" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                        <ComboBox x:Name="WizardAuthModeCombo" Margin="0,2,0,8" SelectionChanged="WizardAuthModeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Via Link (Navegador / OAuth)" Tag="OAuthBrowserLink" IsSelected="True"/>
+                            <ComboBoxItem Content="Via Token JSON Manual" Tag="ManualTokenJson"/>
+                            <ComboBoxItem Content="Via Chave / Credenciais (Key, Senha ou Service Account JSON)" Tag="KeyOrCredentials"/>
+                        </ComboBox>
+
+                        <Border x:Name="WizardDriveHintBorder" Background="#0B1220" BorderBrush="#F59E0B" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,8">
+                            <TextBlock Text="Google Drive: o client_id compartilhado do Rclone está sendo descontinuado em 2026. Recomenda-se informar seu próprio client_id e client_secret abaixo."
+                                       FontSize="11" Foreground="#FDE68A" TextWrapping="Wrap"/>
+                        </Border>
+
+                        <!-- CAMPOS OAUTH / CLIENT ID -->
+                        <Grid x:Name="WizardClientIdGrid" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="client_id (opcional/recomendado)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBox x:Name="WizardClientIdBox" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="client_secret" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBox x:Name="WizardClientSecretBox" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- CAMPO TOKEN MANUAL -->
+                        <StackPanel x:Name="WizardTokenPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                            <Grid Margin="0,0,0,4">
+                                <TextBlock Text="Cole o Token JSON (gerado via rclone authorize)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
+                                <Button Content="Gerar Token via rclone authorize" HorizontalAlignment="Right" Padding="8,3"
+                                        Click="WizardAuthorizeTerminal_Click"/>
+                            </Grid>
+                            <TextBox x:Name="WizardTokenBox" AcceptsReturn="True" Height="64" FontFamily="Consolas" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <!-- CAMPO CHAVE / CREDENCIAIS -->
+                        <StackPanel x:Name="WizardKeyPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                            <TextBlock Text="Arquivo de Chave / Service Account JSON (para Drive SA ou SFTP key_file)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                            <Grid Margin="0,2,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="WizardKeyFileBox"/>
+                                <Button Grid.Column="1" Content="Procurar..." Margin="6,0,0,0" Click="WizardBrowseKeyFile_Click"/>
+                            </Grid>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Host / Endpoint" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                    <TextBox x:Name="WizardHostBox"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="Usuário / Access Key" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                    <TextBox x:Name="WizardUserBox"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="4">
+                                    <TextBlock Text="Senha / Secret Key" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                    <PasswordBox x:Name="WizardPassBox" Background="#0B1220" Foreground="#F8FAFC" BorderBrush="#334155" BorderThickness="1" Padding="6,5"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <Button x:Name="WizardCreateRemoteButton" Content="Autenticar / Salvar &amp; Testar Remote"
+                                    Style="{StaticResource SuccessButtonStyle}" Click="WizardCreateRemoteButton_Click" Margin="0,0,10,0"/>
+                            <TextBlock x:Name="WizardRemoteActionText" Text="" FontSize="11.5" Foreground="{StaticResource AccentCyanBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- ETAPA 4: REVISÃO DAS CONFIGURAÇÕES & TAREFAS -->
+                <Grid x:Name="Step4Panel" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="125"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                        <TextBlock Text="Revisão das Configurações &amp; Tarefas" FontSize="16" FontWeight="Bold" Margin="0,0,0,4"/>
+                        <TextBlock Text="Revise cada tarefa importada ou padrão (caminhos de origem, destino, operação e intervalo) antes de salvar."
+                                   Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" FontSize="11.5"/>
+                    </StackPanel>
+
+                    <ListBox x:Name="WizardJobsReviewList" Grid.Row="1" Background="#0B1220" Foreground="#F8FAFC"
+                             BorderBrush="#334155" Margin="0,0,0,10" SelectionChanged="WizardJobsReviewList_SelectionChanged"/>
+
+                    <StackPanel Grid.Row="2" Margin="0,0,0,8">
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.5*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="105"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Nome da Tarefa" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBox x:Name="WizardJobNameBox"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Operação" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                <ComboBox x:Name="WizardJobOpCombo"/>
+                            </StackPanel>
+                            <CheckBox x:Name="WizardJobEnabledCheck" Grid.Column="4" Content="Ativa" VerticalAlignment="Bottom" Margin="0,0,0,6"/>
+                        </Grid>
+
+                        <TextBlock Text="Pasta de Origem (Local)" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                        <Grid Margin="0,2,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="WizardSourceBox"/>
+                            <Button Grid.Column="1" Content="Procurar..." Margin="6,0,0,0" Click="WizardBrowseSource_Click"/>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.5*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="105"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Destino (ex: gdrive:BackupPC/)" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBox x:Name="WizardDestBox"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Intervalo (min)" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBox x:Name="WizardIntervalBox" Text="120"/>
+                            </StackPanel>
+                            <Button Grid.Column="4" Content="Aplicar na Tarefa" VerticalAlignment="Bottom"
+                                    Click="WizardApplyJobEdit_Click"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <CheckBox x:Name="WizardAutoStartupCheck" Grid.Row="3" IsChecked="True"
+                              Content="Iniciar Serviço automaticamente com o Windows (HKCU\...\Run)"/>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- RODAPÉ NAVEGAÇÃO -->
+        <Grid Grid.Row="3">
+            <Button Content="Concluir Depois" HorizontalAlignment="Left" Click="SkipButton_Click"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="BackButton" Content="◀ Voltar" Click="BackButton_Click" IsEnabled="False" Margin="0,0,8,0"/>
+                <Button x:Name="NextButton" Content="Avançar ▶" Style="{StaticResource PrimaryButtonStyle}" Click="NextButton_Click" Width="140"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
