@@ -1,0 +1,64 @@
+## ==========================================
+## .NET / C# / Visual Studio
+## ==========================================
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+publish/
+TestResults/
+*.nupkg
+*.snupkg
+packages/
+*.cache
+*.dll
+*.exe
+*.pdb
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## ==========================================
+## IDEs & Editores
+## ==========================================
+.idea/
+*.sln.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+## ==========================================
+## Windows / Sistema Operacional
+## ==========================================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+*.tmp
+*.bak
+*.swp
+*~
+
+## ==========================================
+## Rclone & RcloneManager (Runtime, Logs e Configs Locais)
+## ==========================================
+.rclone-manager-runtime/
+*.log
+rclone.conf
+rclone_manager_config.json
+rclone.exe
+/rclone*/
+

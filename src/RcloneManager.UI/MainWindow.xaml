@@ -1,0 +1,518 @@
+<Window x:Class="RcloneManager.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="RcloneManager — Controle Híbrido, Interface &amp; Serviço"
+        Height="780" Width="1180"
+        MinHeight="640" MinWidth="960"
+        Background="{StaticResource BgWindowBrush}"
+        WindowStartupLocation="CenterScreen"
+        Closing="Window_Closing">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- HEADER -->
+        <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Vertical">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="RcloneManager" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC"/>
+                        <Border Background="#1D4ED8" CornerRadius="4" Padding="8,2" Margin="10,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="HÍBRIDO RC + CLI" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFF"/>
+                        </Border>
+                        <TextBlock x:Name="RcloneVersionText" Text="rclone ..." Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0" VerticalAlignment="Center">
+                        <Ellipse x:Name="ServiceStatusDot" Width="10" Height="10" Fill="#F59E0B" Margin="0,0,7,0"/>
+                        <TextBlock x:Name="ServiceStatusText" Text="Conectando ao serviço em 2º plano..." FontSize="12.5"
+                                   Foreground="{StaticResource TextMutedBrush}" Margin="0,0,18,0"/>
+                        <TextBlock x:Name="RcdStatusText" Text="Daemon RC: verificando..." FontSize="12.5"
+                                   Foreground="{StaticResource TextMutedBrush}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="ToggleRcdButton" Content="Alternar Daemon RC" Click="ToggleRcdButton_Click" Margin="0,0,8,0"/>
+                    <Button x:Name="QuickRunPrimaryButton" Content="▶ Executar Backup Principal"
+                            Style="{StaticResource SuccessButtonStyle}" Click="QuickRunPrimaryButton_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- TABS -->
+        <TabControl x:Name="MainTabs" Grid.Row="1">
+            <!-- ABA 1: DASHBOARD -->
+            <TabItem Header="Dashboard &amp; Ao Vivo">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- KPIs -->
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="TAREFA ATIVA" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBlock x:Name="ActiveJobTitleText" Text="Nenhuma em execução" FontSize="15" FontWeight="SemiBold"
+                                           Margin="0,6,0,2" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="ActiveStrategyText" Text="Aguardando próximo agendamento" FontSize="11.5"
+                                           Foreground="{StaticResource AccentCyanBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Margin="4,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="VELOCIDADE &amp; PROGRESSO" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBlock x:Name="SpeedValueText" Text="0 B/s" FontSize="18" FontWeight="Bold" Foreground="#38BDF8" Margin="0,6,0,2"/>
+                                <TextBlock x:Name="ProgressValueText" Text="0% (0 B / 0 B)" FontSize="12" Foreground="{StaticResource TextMutedBrush}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}" Margin="4,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="ARQUIVOS &amp; ERROS" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBlock x:Name="TransfersValueText" Text="0 / 0 transf." FontSize="17" FontWeight="Bold" Foreground="#10B981" Margin="0,6,0,2"/>
+                                <TextBlock x:Name="ErrorsEtaText" Text="Erros: 0 | ETA: --" FontSize="12" Foreground="{StaticResource TextMutedBrush}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="3" Style="{StaticResource CardBorderStyle}" Margin="4,0,0,0">
+                            <StackPanel>
+                                <TextBlock Text="REMOTES &amp; ARMAZENAMENTO" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBlock x:Name="RemotesListText" Text="Carregando..." FontSize="14" FontWeight="SemiBold" Margin="0,6,0,2"/>
+                                <TextBlock x:Name="DriveAboutText" Text="Espaço: clique Atualizar" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- PROGRESSO + CONTROLE DE BANDA -->
+                    <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="Progresso da Transferência em Tempo Real (via Rclone RC /core/stats)"
+                                           FontSize="12.5" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                <ProgressBar x:Name="OverallProgressBar" Height="16" Minimum="0" Maximum="100" Value="0"
+                                             Background="#0B1220" Foreground="#2563EB" BorderBrush="#334155" BorderThickness="1"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
+                                <TextBlock Text="Limite Banda:" VerticalAlignment="Center" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="BwLimitCombo" Width="110" Margin="0,0,6,0">
+                                    <ComboBoxItem Content="off" Tag="off"/>
+                                    <ComboBoxItem Content="1M" Tag="1M"/>
+                                    <ComboBoxItem Content="2M" Tag="2M"/>
+                                    <ComboBoxItem Content="5M" Tag="5M"/>
+                                    <ComboBoxItem Content="10M" Tag="10M"/>
+                                    <ComboBoxItem Content="20M" Tag="20M"/>
+                                    <ComboBoxItem Content="50M" Tag="50M"/>
+                                </ComboBox>
+                                <Button x:Name="ApplyBwButton" Content="Aplicar" Click="ApplyBwButton_Click" Margin="0,0,8,0"/>
+                                <Button x:Name="RefreshRemotesButton" Content="Atualizar Remotes" Click="RefreshRemotesButton_Click" Margin="0,0,8,0"/>
+                                <Button x:Name="StopActiveButton" Content="■ Parar Tarefa" Style="{StaticResource DangerButtonStyle}"
+                                        Click="StopActiveButton_Click" IsEnabled="False"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- ARQUIVOS SENDO TRANSFERIDOS -->
+                    <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="Arquivos em Transferência Agora" FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <DataGrid x:Name="TransferringGrid" Grid.Row="1">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Arquivo" Binding="{Binding FileName}" Width="*"/>
+                                    <DataGridTextColumn Header="Tamanho" Binding="{Binding SizeFormatted}" Width="100"/>
+                                    <DataGridTextColumn Header="Enviado" Binding="{Binding TransferredFormatted}" Width="100"/>
+                                    <DataGridTextColumn Header="%" Binding="{Binding PercentText}" Width="70"/>
+                                    <DataGridTextColumn Header="Velocidade" Binding="{Binding SpeedFormatted}" Width="110"/>
+                                    <DataGridTextColumn Header="ETA" Binding="{Binding EtaFormatted}" Width="80"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ABA 2: TAREFAS & AGENDADOR -->
+            <TabItem Header="Tarefas &amp; Agendador">
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.05*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="1.25*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- LISTA DE TAREFAS -->
+                    <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="Tarefas Configuradas" FontSize="14" FontWeight="Bold" Margin="0,0,0,8"/>
+
+                            <WrapPanel Grid.Row="1" Margin="0,0,0,10">
+                                <Button x:Name="NewJobButton" Content="+ Nova" Style="{StaticResource PrimaryButtonStyle}"
+                                        Click="NewJobButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="RunSelectedJobButton" Content="▶ Executar" Style="{StaticResource SuccessButtonStyle}"
+                                        Click="RunSelectedJobButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="DryRunSelectedJobButton" Content="Simular (Dry-Run)"
+                                        Click="DryRunSelectedJobButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="StopSelectedJobButton" Content="■ Parar" Style="{StaticResource DangerButtonStyle}"
+                                        Click="StopSelectedJobButton_Click" Margin="0,0,6,6"/>
+                                <Button x:Name="DeleteSelectedJobButton" Content="Excluir"
+                                        Click="DeleteSelectedJobButton_Click" Margin="0,0,0,6"/>
+                            </WrapPanel>
+
+                            <DataGrid x:Name="JobsGrid" Grid.Row="2" SelectionChanged="JobsGrid_SelectionChanged">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Nome" Binding="{Binding Name}" Width="1.4*"/>
+                                    <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="85"/>
+                                    <DataGridTextColumn Header="Próx. Execução" Binding="{Binding NextRunText}" Width="125"/>
+                                    <DataGridTextColumn Header="Última" Binding="{Binding LastRunText}" Width="125"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+
+                    <!-- EDITOR DE TAREFA + AGENDADOR -->
+                    <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="0,0,6,0">
+                                <TextBlock Text="Configuração da Tarefa &amp; Agendamento" FontSize="14" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="ID" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <TextBox x:Name="JobIdBox" IsReadOnly="True" Opacity="0.7"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="0,0,10,0">
+                                        <TextBlock Text="Nome da Tarefa" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <TextBox x:Name="JobNameBox"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="JobEnabledCheck" Grid.Column="2" Content="Ativa" VerticalAlignment="Bottom" Margin="0,0,0,6"/>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Operação Rclone" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <ComboBox x:Name="JobOperationCombo"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Estratégia Híbrida (RC / CLI)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <ComboBox x:Name="JobStrategyCombo"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="Pasta de Origem (Source)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <Grid Margin="0,2,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="JobSourceBox"/>
+                                    <Button x:Name="BrowseSourceButton" Grid.Column="1" Content="Procurar..." Margin="6,0,0,0" Click="BrowseSourceButton_Click"/>
+                                </Grid>
+
+                                <TextBlock Text="Destino (ex: gdrive:BackupPC/ ou caminho local)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <Grid Margin="0,2,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="JobDestBox"/>
+                                    <Button x:Name="RefreshDestRemotesButton" Grid.Column="1" Content="Remotes" Margin="6,0,0,0" Click="RefreshDestRemotesButton_Click"/>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.4*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="1*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Arquivo de Filtro / Exclusão" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <Grid Margin="0,2,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="JobFilterPathBox"/>
+                                            <Button x:Name="BrowseFilterButton" Grid.Column="1" Content="..." Margin="4,0,0,0" Click="BrowseFilterButton_Click"/>
+                                        </Grid>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Modo de Filtro" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <ComboBox x:Name="JobFilterModeCombo" Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="1.3*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="--max-size (ex: 50M)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <TextBox x:Name="JobMaxSizeBox"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="--bwlimit (ex: 10M)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <TextBox x:Name="JobBwLimitBox"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="Arquivo de Log" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                        <TextBox x:Name="JobLogFileBox"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="Flags Extras CLI (ex: --retries 3 --low-level-retries 5)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                <TextBox x:Name="JobExtraFlagsBox" Margin="0,2,0,8"/>
+
+                                <WrapPanel Margin="0,0,0,12">
+                                    <CheckBox x:Name="JobSkipLinksCheck" Content="--skip-links" Margin="0,0,14,4"/>
+                                    <CheckBox x:Name="JobFastListCheck" Content="--fast-list" Margin="0,0,14,4"/>
+                                    <CheckBox x:Name="JobCopyLinksCheck" Content="--copy-links" Margin="0,0,14,4"/>
+                                    <CheckBox x:Name="JobDryRunCheck" Content="Sempre Simular (--dry-run)" Margin="0,0,0,4"/>
+                                </WrapPanel>
+
+                                <!-- BLOCO AGENDADOR -->
+                                <Border Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,12">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                            <TextBlock Text="Agendamento Automático (Scheduler)" FontSize="13" FontWeight="Bold" Foreground="#38BDF8"/>
+                                            <CheckBox x:Name="JobScheduledCheck" Content="Habilitar Agendamento" Margin="14,0,0,0"/>
+                                        </StackPanel>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.3*"/>
+                                                <ColumnDefinition Width="8"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="8"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Tipo de Agendamento" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                                <ComboBox x:Name="JobScheduleTypeCombo"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Intervalo (min)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                                <TextBox x:Name="JobIntervalBox"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock Text="Horário (HH:mm)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                                <TextBox x:Name="JobDailyTimeBox"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <TextBlock Text="Dias da Semana (para Agendamento Semanal)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,4"/>
+                                        <WrapPanel Margin="0,0,0,8">
+                                            <CheckBox x:Name="DayMonCheck" Content="Seg" Margin="0,0,10,0"/>
+                                            <CheckBox x:Name="DayTueCheck" Content="Ter" Margin="0,0,10,0"/>
+                                            <CheckBox x:Name="DayWedCheck" Content="Qua" Margin="0,0,10,0"/>
+                                            <CheckBox x:Name="DayThuCheck" Content="Qui" Margin="0,0,10,0"/>
+                                            <CheckBox x:Name="DayFriCheck" Content="Sex" Margin="0,0,10,0"/>
+                                            <CheckBox x:Name="DaySatCheck" Content="Sáb" Margin="0,0,10,0"/>
+                                            <CheckBox x:Name="DaySunCheck" Content="Dom"/>
+                                        </WrapPanel>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="12"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="8"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox x:Name="JobRetryCheck" Grid.Column="0" Content="Retentar se falhar" VerticalAlignment="Bottom" Margin="0,0,0,6"/>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Máx. Retentativas" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                                <TextBox x:Name="JobMaxRetriesBox"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock Text="Espera (min)" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"/>
+                                                <TextBox x:Name="JobRetryDelayBox"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Button x:Name="SaveJobButton" Content="Salvar Tarefa e Recalcular Agendamento"
+                                        Style="{StaticResource PrimaryButtonStyle}" Height="36" Click="SaveJobButton_Click"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ABA 3: FILTROS & OTIMIZADOR -->
+            <TabItem Header="Filtros &amp; Otimizador">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0" Margin="0,0,10,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Arquivo:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBox x:Name="FilterFilePathBox" Grid.Column="1" Text="exclude_user_folder.txt"/>
+                                <Button x:Name="BrowseEditorFilterButton" Grid.Column="2" Content="Procurar" Margin="6,0,0,0" Click="BrowseEditorFilterButton_Click"/>
+                            </Grid>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button x:Name="AnalyzeFilterButton" Content="Carregar / Analisar" Click="AnalyzeFilterButton_Click" Margin="0,0,6,0"/>
+                                <Button x:Name="OptimizeFilterButton" Content="Corrigir &amp; Otimizar (Backup .bak)"
+                                        Style="{StaticResource PrimaryButtonStyle}" Click="OptimizeFilterButton_Click" Margin="0,0,6,0"/>
+                                <Button x:Name="SaveFilterButton" Content="Salvar Edição" Style="{StaticResource SuccessButtonStyle}"
+                                        Click="SaveFilterButton_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="FilterStatusBadge" Grid.Row="1" Background="#1E293B" BorderBrush="#F59E0B"
+                            BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+                        <TextBox x:Name="FilterDiagnosticsText" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                 TextWrapping="Wrap" MaxHeight="110" VerticalScrollBarVisibility="Auto"
+                                 Text="Clique em 'Carregar / Analisar' para inspecionar seu arquivo de filtros."/>
+                    </Border>
+
+                    <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}">
+                        <TextBox x:Name="FilterEditorBox" AcceptsReturn="True" AcceptsTab="True"
+                                 FontFamily="Consolas" FontSize="12.5"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 TextWrapping="NoWrap"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ABA 4: LOGS & SERVIÇO -->
+            <TabItem Header="Logs &amp; Serviço">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Gerenciamento do Serviço em Segundo Plano" FontSize="14" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <WrapPanel>
+                                    <CheckBox x:Name="WindowsStartupCheck" Content="Iniciar Serviço automaticamente com o Windows (HKCU\...\Run)"
+                                              Click="WindowsStartupCheck_Click" Margin="0,0,18,4"/>
+                                    <TextBlock x:Name="ServiceAdminStatusText" Text="Serviço local em http://127.0.0.1:5580"
+                                               Foreground="{StaticResource TextMutedBrush}" FontSize="12" VerticalAlignment="Center"/>
+                                </WrapPanel>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="ReconnectServiceButton" Content="Iniciar / Reconectar Serviço"
+                                        Style="{StaticResource PrimaryButtonStyle}" Click="ReconnectServiceButton_Click" Margin="0,0,6,0"/>
+                                <Button x:Name="ShutdownServiceButton" Content="Encerrar Serviço"
+                                        Style="{StaticResource DangerButtonStyle}" Click="ShutdownServiceButton_Click" Margin="0,0,6,0"/>
+                                <Button x:Name="InstallWindowsServiceButton" Content="Instalar WinService"
+                                        Click="InstallWindowsServiceButton_Click" Margin="0,0,6,0"/>
+                                <Button x:Name="UninstallWindowsServiceButton" Content="Remover WinService"
+                                        Click="UninstallWindowsServiceButton_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Fonte do Log:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox x:Name="LogSourceCombo" Width="230" SelectionChanged="LogControls_Changed" Margin="0,0,14,0">
+                                <ComboBoxItem Content="Rclone (rclone_backup.log)" IsSelected="True"/>
+                                <ComboBoxItem Content="Serviço &amp; Agendador"/>
+                            </ComboBox>
+
+                            <TextBlock Text="Filtro:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox x:Name="LogFilterCombo" Width="170" SelectionChanged="LogControls_Changed" Margin="0,0,14,0">
+                                <ComboBoxItem Content="Todos os registros" IsSelected="True"/>
+                                <ComboBoxItem Content="Apenas Erros (ERROR)"/>
+                                <ComboBoxItem Content="Avisos e Erros"/>
+                            </ComboBox>
+
+                            <CheckBox x:Name="AutoScrollLogsCheck" Content="Rolagem automática" IsChecked="True" Margin="0,0,14,0"/>
+                            <Button x:Name="RefreshLogsButton" Content="Atualizar Logs" Click="RefreshLogsButton_Click"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}">
+                        <TextBox x:Name="LogsTextBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 TextWrapping="NoWrap"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!-- FOOTER -->
+        <TextBlock x:Name="FooterInfoText" Grid.Row="2" Margin="2,8,2,0" FontSize="11.5"
+                   Foreground="{StaticResource TextMutedBrush}"
+                   Text="Pronto. O serviço em segundo plano substitui script.bat e rodar.vbs mantendo o agendador ativo mesmo com a janela fechada."/>
+    </Grid>
+</Window>
