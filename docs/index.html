@@ -21,7 +21,7 @@
         <span class="brand-badge">.NET 10</span>
       </a>
 
-      <button id="navToggle" class="nav-toggle" aria-label="Abrir menu">☰</button>
+      <button id="navToggle" type="button" class="nav-toggle" aria-label="Abrir menu">☰</button>
 
       <nav id="navLinks" class="nav-links">
         <a href="#recursos">Recursos</a>
@@ -69,9 +69,9 @@
           </div>
 
           <div class="mockup-tabs">
-            <button class="mockup-tab active" data-pane="pane-dashboard">Dashboard Ao Vivo</button>
-            <button class="mockup-tab" data-pane="pane-remotes">Remotes (3 Modos)</button>
-            <button class="mockup-tab" data-pane="pane-wizard">Wizard &amp; Cofre</button>
+            <button type="button" class="mockup-tab active" data-pane="pane-dashboard">Dashboard Ao Vivo</button>
+            <button type="button" class="mockup-tab" data-pane="pane-remotes">Remotes (3 Modos)</button>
+            <button type="button" class="mockup-tab" data-pane="pane-wizard">Wizard &amp; Cofre</button>
           </div>
 
           <div class="mockup-body">
@@ -240,7 +240,7 @@
           <div class="code-card">
             <div class="code-header">
               <span>PowerShell — Clonar, Compilar e Iniciar</span>
-              <button id="copyQuickstartBtn" class="btn btn-sm">Copiar</button>
+              <button id="copyQuickstartBtn" type="button" class="btn btn-sm">Copiar</button>
             </div>
             <pre id="quickstartCode">git clone https://github.com/Dillemon-Recla/RcloneManager.git
 cd RcloneManager
@@ -353,9 +353,39 @@ dotnet build RcloneManager.sln -c Release
             <p>Aponte a câmera do app do seu banco ou copie a chave abaixo:</p>
             <div class="pix-key">95b9aa86-3c99-421d-9c86-6a47a3b09d7b</div>
             <div>
-              <button id="copyPixBtn" class="btn btn-sm btn-success">Copiar Chave Pix</button>
+              <button id="copyPixBtn" type="button" class="btn btn-sm btn-success">Copiar Chave Pix</button>
               <span id="pixFeedback" class="copy-feedback"></span>
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CRÉDITOS AO RCLONE -->
+    <section id="creditos">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-kicker">Motor &amp; Tecnologia Base</div>
+          <h2>Créditos aos Criadores do Rclone</h2>
+          <p>Todo o transporte em nuvem, compatibilidade com 71+ provedores, criptografia de remotes e protocolo RC existem graças ao trabalho incrível do projeto original.</p>
+        </div>
+
+        <div class="card">
+          <h3>Construído sobre o Rclone (Licença MIT)</h3>
+          <p style="margin-bottom:0.85rem;">
+            O <strong>RcloneManager</strong> é uma interface independente desenvolvida sobre o
+            <a href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Rclone</a>, criado por
+            <a href="https://github.com/ncw" target="_blank" rel="noopener noreferrer">Nick Craig-Wood</a> e mantido pelos contribuidores da comunidade
+            <a href="https://github.com/rclone/rclone" target="_blank" rel="noopener noreferrer">rclone/rclone</a> sob a licença MIT.
+          </p>
+          <p style="margin-bottom:1.15rem;color:var(--text-muted);font-size:0.92rem;">
+            Este projeto não possui afiliação oficial com os mantenedores do Rclone. Os binários oficiais baixados pelo provisionamento automático vêm diretamente das releases oficiais assinadas por SHA-256 do Rclone.
+          </p>
+          <div style="display:flex;flex-wrap:wrap;gap:0.6rem;">
+            <a class="btn btn-sm btn-primary" href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Site Oficial (rclone.org)</a>
+            <a class="btn btn-sm" href="https://github.com/rclone/rclone" target="_blank" rel="noopener noreferrer">Repositório do Rclone</a>
+            <a class="btn btn-sm" href="https://github.com/ncw" target="_blank" rel="noopener noreferrer">Nick Craig-Wood (Criador)</a>
+            <a class="btn btn-sm btn-success" href="https://rclone.org/donate/" target="_blank" rel="noopener noreferrer">Apoiar o Projeto Rclone</a>
           </div>
         </div>
       </div>
@@ -367,12 +397,14 @@ dotnet build RcloneManager.sln -c Release
   <footer>
     <div class="container footer-inner">
       <div>
-        <strong>RcloneManager</strong> · Software Livre sob Licença <a href="https://github.com/Dillemon-Recla/RcloneManager/blob/dev/LICENSE" target="_blank" rel="noopener noreferrer">MIT</a> · Copyright © 2026 Dillemon Recla
+        <strong>RcloneManager</strong> · Licença <a href="https://github.com/Dillemon-Recla/RcloneManager/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT</a> · Baseado no <a href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Rclone</a> (criado por <a href="https://github.com/ncw" target="_blank" rel="noopener noreferrer">Nick Craig-Wood</a> e comunidade) · Copyright © 2026 Dillemon Recla
       </div>
-      <div style="display:flex;gap:1.1rem;">
+      <div style="display:flex;flex-wrap:wrap;gap:1.1rem;">
         <a href="https://github.com/Dillemon-Recla/RcloneManager" target="_blank" rel="noopener noreferrer">Repositório</a>
         <a href="https://github.com/Dillemon-Recla/RcloneManager/issues" target="_blank" rel="noopener noreferrer">Issues</a>
+        <a href="https://ko-fi.com/dillemonrecla" target="_blank" rel="noopener noreferrer">Ko-fi</a>
         <a href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Rclone.org</a>
+        <a href="https://github.com/rclone/rclone" target="_blank" rel="noopener noreferrer">Rclone (GitHub)</a>
       </div>
     </div>
   </footer>

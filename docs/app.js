@@ -1,10 +1,24 @@
 (() => {
   const PIX_KEY = "95b9aa86-3c99-421d-9c86-6a47a3b09d7b";
-  const GITHUB_BLOB_BASE = "https://github.com/Dillemon-Recla/RcloneManager/blob/dev/docs/";
+  const GITHUB_BLOB_BASE = "https://github.com/Dillemon-Recla/RcloneManager/blob/main/docs/";
   const GITHUB_API_DOCS = [
     "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs",
     "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs?ref=dev"
   ];
+
+  const buttonTimers = new WeakMap();
+
+  function setTempButtonLabel(btn, tempText, defaultText, delayMs = 1600) {
+    if (!btn) return;
+    const prevTimer = buttonTimers.get(btn);
+    if (prevTimer) clearTimeout(prevTimer);
+    btn.textContent = tempText;
+    const timer = setTimeout(() => {
+      btn.textContent = defaultText;
+      buttonTimers.delete(btn);
+    }, delayMs);
+    buttonTimers.set(btn, timer);
+  }
 
   // Menu mobile
   const navToggle = document.getElementById("navToggle");
@@ -23,11 +37,13 @@
   const mockupPanes = document.querySelectorAll(".mockup-pane");
   mockupTabs.forEach((tab) => {
     tab.addEventListener("click", () => {
-      const target = tab.getAttribute("data-tab");
+      const paneId =
+        tab.getAttribute("data-pane") ||
+        (tab.getAttribute("data-tab") ? `pane-${tab.getAttribute("data-tab")}` : null);
       mockupTabs.forEach((t) => t.classList.remove("active"));
       mockupPanes.forEach((p) => p.classList.remove("active"));
       tab.classList.add("active");
-      const pane = document.getElementById(`pane-${target}`);
+      const pane = paneId ? document.getElementById(paneId) : null;
       if (pane) pane.classList.add("active");
     });
   });
@@ -39,11 +55,9 @@
     copyQuickstartBtn.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(quickstartCode.innerText);
-        const orig = copyQuickstartBtn.textContent;
-        copyQuickstartBtn.textContent = "Copiado!";
-        setTimeout(() => { copyQuickstartBtn.textContent = orig; }, 1800);
+        setTempButtonLabel(copyQuickstartBtn, "Copiado!", "Copiar", 1800);
       } catch {
-        copyQuickstartBtn.textContent = "Selecione manualmente";
+        setTempButtonLabel(copyQuickstartBtn, "Selecione manualmente", "Copiar", 2200);
       }
     });
   }
@@ -51,15 +65,17 @@
   // Botão copiar Pix
   const copyPixBtn = document.getElementById("copyPixBtn");
   const pixFeedback = document.getElementById("pixFeedback");
+  let pixTimer = null;
   if (copyPixBtn && pixFeedback) {
     copyPixBtn.addEventListener("click", async () => {
+      if (pixTimer) clearTimeout(pixTimer);
       try {
         await navigator.clipboard.writeText(PIX_KEY);
         pixFeedback.textContent = "Chave Pix copiada para a área de transferência!";
       } catch {
         pixFeedback.textContent = `Copie manualmente: ${PIX_KEY}`;
       }
-      setTimeout(() => { pixFeedback.textContent = ""; }, 3200);
+      pixTimer = setTimeout(() => { pixFeedback.textContent = ""; }, 3200);
     });
   }
 
@@ -72,20 +88,41 @@
       .replace(/"/g, "&quot;");
   }
 
+  function normalizeDocLink(rawHref) {
+    return rawHref.trim().replace(/^\.\//, "").replace(/^docs\//i, "");
+  }
+
   function formatInline(text) {
-    let out = escapeHtml(text);
-    out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
+    const clean = text.replace(/\u0000/g, "");
+    const codeTokens = [];
+
+    let out = escapeHtml(clean);
+    out = out.replace(/`([^`]+)`/g, (_, codeContent) => {
+      const idx = codeTokens.length;
+      codeTokens.push(`<code>${codeContent}</code>`);
+      return `\u0000IC:${idx}\u0000`;
+    });
+
+    out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    out = out.replace(/\[([^\]]+)\]\((#[^\s)]+)\)/g, '<a href="$2">$1</a>');
+    out = out.replace(/\[([^\]]+)\]\(([^)\s]+\.md)\)/g, (_, label, href) => {
+      const normalized = normalizeDocLink(href);
+      return `<a href="#doc=${encodeURIComponent(normalized)}" data-internal-doc="${normalized}">${label}</a>`;
+    });
+
     out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     out = out.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-    out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|#[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-    out = out.replace(/\[([^\]]+)\]\(([^)\s]+\.md)\)/g, '<a href="#doc=$2" data-internal-doc="$2">$1</a>');
+
+    out = out.replace(/\u0000IC:(\d+)\u0000/g, (_, idx) => codeTokens[Number(idx)] || "");
     return out;
   }
 
-  function renderMarkdown(md) {
+  function renderMarkdown(md, options = {}) {
+    const { stripLeadingH1 = true } = options;
     const lines = md.replace(/\r\n/g, "\n").split("\n");
     const html = [];
     let i = 0;
+    let strippedFirstH1 = !stripLeadingH1;
 
     while (i < lines.length) {
       const line = lines[i];
@@ -124,6 +161,11 @@
       const hMatch = line.match(/^(#{1,4})\s+(.*)$/);
       if (hMatch) {
         const level = hMatch[1].length;
+        if (level === 1 && !strippedFirstH1) {
+          strippedFirstH1 = true;
+          i++;
+          continue;
+        }
         html.push(`<h${level}>${formatInline(hMatch[2])}</h${level}>`);
         i++;
         continue;
@@ -150,7 +192,7 @@
           rows.push(parseRow(lines[i]));
           i++;
         }
-        let tableHtml = "<table><thead><tr>";
+        let tableHtml = '<div class="table-wrap"><table><thead><tr>';
         headers.forEach((h) => { tableHtml += `<th>${formatInline(h)}</th>`; });
         tableHtml += "</tr></thead><tbody>";
         rows.forEach((r) => {
@@ -158,7 +200,7 @@
           r.forEach((c) => { tableHtml += `<td>${formatInline(c)}</td>`; });
           tableHtml += "</tr>";
         });
-        tableHtml += "</tbody></table>";
+        tableHtml += "</tbody></table></div>";
         html.push(tableHtml);
         continue;
       }
@@ -275,9 +317,9 @@
     const hash = window.location.hash || "";
     if (!hash.startsWith("#doc=")) return null;
     try {
-      return decodeURIComponent(hash.slice(5));
+      return normalizeDocLink(decodeURIComponent(hash.slice(5)));
     } catch {
-      return hash.slice(5);
+      return normalizeDocLink(hash.slice(5));
     }
   }
 
@@ -287,6 +329,28 @@
     if (window.location.hash !== nextHash) {
       history.replaceState(null, "", nextHash);
     }
+  }
+
+  function scrollToDocOrHub(fileName) {
+    if (fileName) {
+      const slug = fileName.replace(/[^a-zA-Z0-9_-]/g, "-");
+      const sectionEl = document.getElementById(`section-${slug}`);
+      if (sectionEl) {
+        sectionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+    }
+    const docsSection = document.getElementById("documentacao");
+    if (docsSection) {
+      docsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function updateSidebarActiveState(fileName) {
+    if (!docsSidebar) return;
+    docsSidebar.querySelectorAll("button[data-select-doc]").forEach((btn) => {
+      btn.classList.toggle("active", btn.getAttribute("data-select-doc") === fileName);
+    });
   }
 
   function getFilteredDocs() {
@@ -309,11 +373,9 @@
         if (!pre) return;
         try {
           await navigator.clipboard.writeText(pre.innerText);
-          const orig = btn.textContent;
-          btn.textContent = "Copiado!";
-          setTimeout(() => { btn.textContent = orig; }, 1600);
+          setTempButtonLabel(btn, "Copiado!", "Copiar", 1600);
         } catch {
-          btn.textContent = "Erro";
+          setTempButtonLabel(btn, "Erro", "Copiar", 1600);
         }
       });
     });
@@ -328,6 +390,7 @@
         docsState.mode = "single";
         setDocHash(targetFile);
         renderDocsHub();
+        scrollToDocOrHub(targetFile);
       });
     });
 
@@ -337,11 +400,9 @@
         const url = `${window.location.origin}${window.location.pathname}#doc=${encodeURIComponent(fileName)}`;
         try {
           await navigator.clipboard.writeText(url);
-          const orig = btn.textContent;
-          btn.textContent = "Link copiado!";
-          setTimeout(() => { btn.textContent = orig; }, 1600);
+          setTempButtonLabel(btn, "Link copiado!", "Copiar link", 1600);
         } catch {
-          btn.textContent = "Copie a URL";
+          setTempButtonLabel(btn, "Copie a URL", "Copiar link", 1600);
         }
       });
     });
@@ -401,7 +462,7 @@
 
     docsSidebar.innerHTML = filtered
       .map((doc) => {
-        const isActive = docsState.mode === "single" && doc.file === docsState.activeFile;
+        const isActive = doc.file === docsState.activeFile;
         return `
           <button type="button" class="doc-nav-btn${isActive ? " active" : ""}" data-select-doc="${escapeHtml(doc.file)}">
             <span class="doc-nav-title">${escapeHtml(doc.title)}</span>
@@ -417,9 +478,8 @@
         docsState.activeFile = fileName;
         setDocHash(fileName);
         if (docsState.mode === "all") {
-          const slug = fileName.replace(/[^a-zA-Z0-9_-]/g, "-");
-          const target = document.getElementById(`section-${slug}`);
-          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+          updateSidebarActiveState(fileName);
+          scrollToDocOrHub(fileName);
           return;
         }
         renderDocsHub();
@@ -477,7 +537,7 @@
             file,
             title: extractTitle(raw, file),
             raw,
-            html: renderMarkdown(raw)
+            html: renderMarkdown(raw, { stripLeadingH1: true })
           };
         } catch {
           return null;
@@ -500,6 +560,10 @@
     }
 
     renderDocsHub();
+
+    if (hashDoc && docsState.docs.some((d) => d.file === hashDoc)) {
+      scrollToDocOrHub(hashDoc);
+    }
   }
 
   if (docsSearchInput) {
@@ -529,6 +593,7 @@
       docsState.activeFile = hashDoc;
       docsState.mode = "single";
       renderDocsHub();
+      scrollToDocOrHub(hashDoc);
     }
   });
 
