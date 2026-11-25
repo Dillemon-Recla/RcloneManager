@@ -41,6 +41,10 @@ public sealed class JobScheduler
                 WorkingDirectory = _config.WorkingDirectory,
                 PinnedRcloneVersion = _config.PinnedRcloneVersion,
                 LockRcloneVersion = _config.LockRcloneVersion,
+                FirstRunCompleted = _config.FirstRunCompleted,
+                EncryptionEnabled = _config.EncryptionEnabled,
+                EncryptionKeyTarget = _config.EncryptionKeyTarget,
+                ProtectedSecrets = new Dictionary<string, string>(_config.ProtectedSecrets, StringComparer.OrdinalIgnoreCase),
                 ServiceApiPort = _config.ServiceApiPort,
                 PersistentRcdPort = _config.PersistentRcdPort,
                 AutoStartRcdDaemon = _config.AutoStartRcdDaemon,
@@ -67,6 +71,29 @@ public sealed class JobScheduler
             _engine.InvalidateVersionCache();
             _log.Info($"Configuração de release atualizada: Versão={normalized}, Travada={lockVersion}, Exe='{_config.RcloneExecutablePath}'.");
             return GetConfigSnapshot();
+        }
+    }
+
+    public void MarkFirstRunCompleted()
+    {
+        lock (_configLock)
+        {
+            _config.FirstRunCompleted = true;
+            _store.Save(_config);
+            _log.Info("Assistente inicial (First-Run Wizard) concluído.");
+        }
+    }
+
+    public void ReloadFromDisk()
+    {
+        lock (_configLock)
+        {
+            _config = _store.LoadOrCreateDefault();
+            _retryCounters.Clear();
+            _startupTriggeredJobs.Clear();
+            _engine.InvalidateVersionCache();
+            InitializeNextRuns();
+            _log.Info("Configuração do agendador recarregada do disco.");
         }
     }
 

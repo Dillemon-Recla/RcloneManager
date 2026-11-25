@@ -12,6 +12,7 @@ using RcloneManager.Core.Engine;
 using RcloneManager.Core.Logging;
 using RcloneManager.Core.Models;
 using RcloneManager.Core.Scheduling;
+using RcloneManager.Core.Security;
 using RcloneManager.Core.Storage;
 using RcloneManager.Service;
 
@@ -50,9 +51,14 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
         builder.Logging.ClearProviders();
     }
 
+    var logBuffer = new ServiceLogBuffer(resolvedWorkDir);
+    var keyTarget = SensitiveDataProtector.EnsureInitialized(out var vaultKeyCreated);
+    logBuffer.Info(vaultKeyCreated
+        ? $"Chave AES-256 gerada e salva no Gerenciador de Credenciais do Windows ('{keyTarget}')."
+        : $"Chave AES-256 carregada do Gerenciador de Credenciais do Windows ('{keyTarget}').");
+
     var configStore = new AppConfigStore(resolvedWorkDir);
     var initialConfig = configStore.LoadOrCreateDefault();
-    var logBuffer = new ServiceLogBuffer(resolvedWorkDir);
 
     builder.WebHost.UseUrls($"http://127.0.0.1:{initialConfig.ServiceApiPort}");
 
@@ -95,6 +101,9 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
             RcDaemonPort = engine.RcDaemonPort,
             CurrentBandwidthLimit = cfg.GlobalBandwidthLimit,
             StartupWithWindowsEnabled = ServiceControlHelper.IsStartupEnabled(),
+            FirstRunCompleted = cfg.FirstRunCompleted,
+            EncryptionKeyActive = WindowsCredentialVault.KeyExists(cfg.EncryptionKeyTarget),
+            EncryptionKeyTarget = cfg.EncryptionKeyTarget,
             ActiveJob = engine.GetActiveExecution(),
             LiveStats = engine.GetLiveStats(),
             Jobs = scheduler.GetJobs(),
@@ -194,6 +203,110 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
             var cfg = scheduler.GetConfigSnapshot();
             var (remotes, sourceUsed) = await engine.ListRemotesHybridAsync(cfg, ct);
             return Results.Ok(new { remotes, sourceUsed });
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.Message, statusCode: 500);
+        }
+    });
+
+    app.MapGet("/api/remotes/details", async (JobScheduler scheduler, RcloneHybridEngine engine, CancellationToken ct) =>
+    {
+        try
+        {
+            var cfg = scheduler.GetConfigSnapshot();
+            var (remotes, sourceUsed) = await engine.GetRemotesDetailsHybridAsync(cfg, ct);
+            return Results.Ok(new { remotes, sourceUsed, configPath = cfg.RcloneConfigPath });
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.Message, statusCode: 500);
+        }
+    });
+
+    app.MapGet("/api/remotes/providers", async (JobScheduler scheduler, RcloneHybridEngine engine, CancellationToken ct) =>
+    {
+        try
+        {
+            var cfg = scheduler.GetConfigSnapshot();
+            var (providers, sourceUsed) = await engine.GetProvidersHybridAsync(cfg, ct);
+            return Results.Ok(new { providers, sourceUsed });
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.Message, statusCode: 500);
+        }
+    });
+
+    app.MapPost("/api/remotes/save", async (
+        CreateOrUpdateRemoteRequest req,
+        JobScheduler scheduler,
+        RcloneHybridEngine engine,
+        CancellationToken ct) =>
+    {
+        try
+        {
+            var cfg = scheduler.GetConfigSnapshot();
+            var msg = await engine.CreateOrUpdateRemoteHybridAsync(cfg, req, ct);
+            return Results.Ok(new { saved = true, message = msg });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.Message, statusCode: 500);
+        }
+    });
+
+    app.MapPost("/api/remotes/{name}/reconnect", async (
+        string name,
+        JobScheduler scheduler,
+        RcloneHybridEngine engine,
+        CancellationToken ct) =>
+    {
+        try
+        {
+            var cfg = scheduler.GetConfigSnapshot();
+            var msg = await engine.ReconnectRemoteOAuthAsync(cfg, Uri.UnescapeDataString(name), ct);
+            return Results.Ok(new { reconnected = true, message = msg });
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.Message, statusCode: 500);
+        }
+    });
+
+    app.MapPost("/api/remotes/{name}/test", async (
+        string name,
+        JobScheduler scheduler,
+        RcloneHybridEngine engine,
+        CancellationToken ct) =>
+    {
+        try
+        {
+            var cfg = scheduler.GetConfigSnapshot();
+            var result = await engine.TestRemoteConnectionAsync(cfg, Uri.UnescapeDataString(name), ct);
+            return Results.Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.Message, statusCode: 500);
+        }
+    });
+
+    app.MapDelete("/api/remotes/{name}", async (
+        string name,
+        JobScheduler scheduler,
+        RcloneHybridEngine engine,
+        CancellationToken ct) =>
+    {
+        try
+        {
+            var cfg = scheduler.GetConfigSnapshot();
+            var msg = await engine.DeleteRemoteHybridAsync(cfg, Uri.UnescapeDataString(name), ct);
+            return Results.Ok(new { deleted = true, message = msg });
         }
         catch (Exception ex)
         {
@@ -302,6 +415,52 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
         {
             return Results.BadRequest(new { error = ex.Message });
         }
+    });
+
+    app.MapPost("/api/service/complete-first-run", (JobScheduler scheduler) =>
+    {
+        scheduler.MarkFirstRunCompleted();
+        return Results.Ok(new { firstRunCompleted = true });
+    });
+
+    app.MapPost("/api/service/reload", async (
+        JobScheduler scheduler,
+        RcloneHybridEngine engine,
+        ServiceLogBuffer log,
+        CancellationToken ct) =>
+    {
+        if (engine.IsRcDaemonRunning)
+            await engine.StopRcDaemonAsync();
+
+        scheduler.ReloadFromDisk();
+        var cfg = scheduler.GetConfigSnapshot();
+        if (cfg.AutoStartRcdDaemon && File.Exists(cfg.RcloneExecutablePath))
+            await engine.StartRcDaemonAsync(cfg, ct);
+
+        log.Info("Serviço recarregou configurações do disco.");
+        return Results.Ok(new { reloaded = true, firstRunCompleted = cfg.FirstRunCompleted });
+    });
+
+    app.MapPost("/api/service/reset", async (
+        ResetConfigRequest req,
+        AppConfigStore store,
+        JobScheduler scheduler,
+        RcloneHybridEngine engine,
+        ServiceLogBuffer log,
+        CancellationToken ct) =>
+    {
+        scheduler.StopRunningJob();
+        if (engine.IsRcDaemonRunning)
+            await engine.StopRcDaemonAsync();
+
+        var fresh = store.ResetConfig(req.DeleteCredentialKey, req.DeleteLogsAndRuntime, req.DeleteRcloneConf);
+        scheduler.ReloadFromDisk();
+        log.Warn($"Configurações resetadas (DeleteKey={req.DeleteCredentialKey}, DeleteLogs={req.DeleteLogsAndRuntime}, DeleteRcloneConf={req.DeleteRcloneConf}).");
+
+        if (fresh.AutoStartRcdDaemon && File.Exists(fresh.RcloneExecutablePath))
+            await engine.StartRcDaemonAsync(fresh, ct);
+
+        return Results.Ok(new { reset = true, firstRunCompleted = fresh.FirstRunCompleted });
     });
 
     app.MapPost("/api/service/startup", (bool enabled, JobScheduler scheduler) =>

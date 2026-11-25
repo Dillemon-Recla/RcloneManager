@@ -163,6 +163,73 @@ public sealed class RcloneRcClient : IDisposable
         }
     }
 
+    public async Task<Dictionary<string, Dictionary<string, string>>> GetConfigDumpAsync(CancellationToken ct = default)
+    {
+        using var doc = await PostAsync("/config/dump", null, ct);
+        if (doc == null)
+            return new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+        var result = doc.RootElement.Deserialize<Dictionary<string, Dictionary<string, string>>>(JsonOptions);
+        return result ?? new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<List<RcloneProviderInfo>> GetProvidersAsync(CancellationToken ct = default)
+    {
+        using var doc = await PostAsync("/config/providers", null, ct);
+        if (doc != null && doc.RootElement.TryGetProperty("providers", out var arr))
+        {
+            var list = arr.Deserialize<List<RcloneProviderInfo>>(JsonOptions);
+            if (list != null)
+                return list;
+        }
+        return new List<RcloneProviderInfo>();
+    }
+
+    public async Task CreateRemoteAsync(
+        string name,
+        string type,
+        Dictionary<string, string> parameters,
+        bool obscure = true,
+        CancellationToken ct = default)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["name"] = name,
+            ["type"] = type,
+            ["parameters"] = parameters,
+            ["opt"] = new Dictionary<string, object>
+            {
+                ["obscure"] = obscure,
+                ["noObscure"] = !obscure
+            }
+        };
+        using var _ = await PostAsync("/config/create", payload, ct);
+    }
+
+    public async Task UpdateRemoteAsync(
+        string name,
+        Dictionary<string, string> parameters,
+        bool obscure = true,
+        CancellationToken ct = default)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["name"] = name,
+            ["parameters"] = parameters,
+            ["opt"] = new Dictionary<string, object>
+            {
+                ["obscure"] = obscure,
+                ["noObscure"] = !obscure
+            }
+        };
+        using var _ = await PostAsync("/config/update", payload, ct);
+    }
+
+    public async Task DeleteRemoteAsync(string name, CancellationToken ct = default)
+    {
+        using var _ = await PostAsync("/config/delete", new { name }, ct);
+    }
+
     public void Dispose()
     {
         _http.Dispose();

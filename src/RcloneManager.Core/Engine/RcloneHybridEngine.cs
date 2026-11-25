@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using RcloneManager.Core.Logging;
 using RcloneManager.Core.Models;
 
@@ -13,6 +14,18 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
     private int _rcdPort;
     private bool _rcdRunning;
     private string _cachedRcloneVersion = string.Empty;
+    private List<RcloneProviderInfo>? _cachedProviders;
+
+    private const string MaskedSecretPlaceholder = "••••••••";
+    private static readonly HashSet<string> SensitiveKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "token", "pass", "password", "client_secret", "secret_access_key",
+        "key_pem", "sas_url", "account_key", "jwt", "oauth_token"
+    };
+    private static readonly string[] PopularProviderOrder =
+    {
+        "drive", "onedrive", "dropbox", "s3", "sftp", "ftp", "smb", "webdav", "mega", "local"
+    };
 
     private ActiveJobExecutionInfo? _activeExecution;
     private RcloneStats? _liveStats;
@@ -48,6 +61,7 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
     public void InvalidateVersionCache()
     {
         _cachedRcloneVersion = string.Empty;
+        _cachedProviders = null;
     }
 
     public async Task<(bool IsValid, string ErrorMessage)> ValidatePinnedVersionAsync(AppManagerConfig config, CancellationToken ct = default)
@@ -317,6 +331,400 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
         }
 
         return null;
+    }
+
+    public async Task<(List<RcloneRemoteDetail> Remotes, string SourceUsed)> GetRemotesDetailsHybridAsync(
+        AppManagerConfig config,
+        CancellationToken ct = default)
+    {
+        Dictionary<string, Dictionary<string, string>>? dump = null;
+        var sourceUsed = string.Empty;
+
+        if (IsRcDaemonRunning)
+        {
+            try
+            {
+                using var rc = new RcloneRcClient(_rcdPort);
+                dump = await rc.GetConfigDumpAsync(ct);
+                sourceUsed = $"RC API (porta {_rcdPort})";
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"ConfigDump via RC falhou ({ex.Message}); alternando para CLI.");
+            }
+        }
+
+        if (dump == null)
+        {
+            var (exitCode, stdOut, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
+                config.RcloneExecutablePath,
+                config.RcloneConfigPath,
+                config.WorkingDirectory,
+                new[] { "config", "dump" },
+                ct);
+
+            if (exitCode != 0)
+                throw new InvalidOperationException($"rclone config dump falhou: {stdErr}");
+
+            dump = string.IsNullOrWhiteSpace(stdOut)
+                ? new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase)
+                : JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(stdOut,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                  ?? new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+            sourceUsed = "CLI (rclone config dump)";
+        }
+
+        var list = new List<RcloneRemoteDetail>();
+        foreach (var (remoteName, rawParams) in dump.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var maskedParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var keys = new List<string>();
+            var hasToken = false;
+
+            foreach (var (k, v) in rawParams)
+            {
+                keys.Add(k);
+                if (k.Equals("token", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(v))
+                    hasToken = true;
+
+                maskedParams[k] = IsSensitiveParameter(k) && !string.IsNullOrWhiteSpace(v)
+                    ? MaskedSecretPlaceholder
+                    : v;
+            }
+
+            rawParams.TryGetValue("type", out var remoteType);
+            list.Add(new RcloneRemoteDetail
+            {
+                Name = remoteName,
+                Type = remoteType ?? string.Empty,
+                HasToken = hasToken,
+                Parameters = maskedParams,
+                RawParameterKeys = keys
+            });
+        }
+
+        return (list, sourceUsed);
+    }
+
+    public async Task<(List<RcloneProviderInfo> Providers, string SourceUsed)> GetProvidersHybridAsync(
+        AppManagerConfig config,
+        CancellationToken ct = default)
+    {
+        if (_cachedProviders != null)
+            return (_cachedProviders, "Cache em memória");
+
+        List<RcloneProviderInfo>? providers = null;
+        var sourceUsed = string.Empty;
+
+        if (IsRcDaemonRunning)
+        {
+            try
+            {
+                using var rc = new RcloneRcClient(_rcdPort, TimeSpan.FromSeconds(10));
+                providers = await rc.GetProvidersAsync(ct);
+                sourceUsed = $"RC API (porta {_rcdPort})";
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"Providers via RC falhou ({ex.Message}); alternando para CLI.");
+            }
+        }
+
+        if (providers == null)
+        {
+            var (exitCode, stdOut, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
+                config.RcloneExecutablePath,
+                config.RcloneConfigPath,
+                config.WorkingDirectory,
+                new[] { "config", "providers" },
+                ct);
+
+            if (exitCode != 0)
+                throw new InvalidOperationException($"rclone config providers falhou: {stdErr}");
+
+            providers = JsonSerializer.Deserialize<List<RcloneProviderInfo>>(stdOut,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<RcloneProviderInfo>();
+            sourceUsed = "CLI (rclone config providers)";
+        }
+
+        var sorted = providers
+            .OrderBy(p =>
+            {
+                var idx = Array.IndexOf(PopularProviderOrder, p.Name.ToLowerInvariant());
+                return idx >= 0 ? idx : 999;
+            })
+            .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _cachedProviders = sorted;
+        return (sorted, sourceUsed);
+    }
+
+    public async Task<string> CreateOrUpdateRemoteHybridAsync(
+        AppManagerConfig config,
+        CreateOrUpdateRemoteRequest req,
+        CancellationToken ct = default)
+    {
+        var remoteName = req.Name.Trim().TrimEnd(':');
+        if (!IsValidRemoteName(remoteName))
+            throw new ArgumentException("Nome de remote inválido. Use letras, números, '-', '_' ou '.' sem ':'.");
+
+        if (!req.IsUpdate && string.IsNullOrWhiteSpace(req.Type))
+            throw new ArgumentException("Selecione o tipo de provedor (ex: drive, s3, sftp, local).");
+
+        var cleanParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, val) in req.Parameters)
+        {
+            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(val))
+                continue;
+            if (val == MaskedSecretPlaceholder)
+                continue;
+            cleanParams[key.Trim()] = val.Trim();
+        }
+
+        var effectiveAuthMode = req.TriggerOAuthBrowser && req.AuthMode == RemoteAuthMode.KeyOrCredentials
+            ? RemoteAuthMode.OAuthBrowserLink
+            : req.AuthMode;
+
+        if (effectiveAuthMode == RemoteAuthMode.ManualTokenJson)
+        {
+            var tokenRaw = req.ManualTokenJson?.Trim();
+            if (string.IsNullOrWhiteSpace(tokenRaw))
+            {
+                if (!req.IsUpdate)
+                    throw new ArgumentException("Cole o Token JSON no campo dedicado para autenticar via Token Manual.");
+            }
+            else
+            {
+                try
+                {
+                    using var _ = JsonDocument.Parse(tokenRaw);
+                }
+                catch (JsonException ex)
+                {
+                    throw new ArgumentException($"O Token JSON informado não é um JSON válido: {ex.Message}");
+                }
+                cleanParams["token"] = tokenRaw;
+            }
+        }
+
+        if (!req.IsUpdate && effectiveAuthMode == RemoteAuthMode.OAuthBrowserLink)
+        {
+            var args = new List<string> { "config", "create", remoteName, req.Type.Trim() };
+            foreach (var (k, v) in cleanParams)
+            {
+                args.Add($"{k}={v}");
+            }
+            if (req.ObscurePasswords)
+                args.Add("--obscure");
+
+            using var oauthCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            oauthCts.CancelAfter(TimeSpan.FromMinutes(3));
+
+            _log.Info($"Iniciando criação de remote '{remoteName}' ({req.Type}) via Link (CLI + OAuth no navegador)...");
+            var (exitCode, _, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
+                config.RcloneExecutablePath,
+                config.RcloneConfigPath,
+                config.WorkingDirectory,
+                args,
+                oauthCts.Token,
+                closeStdInImmediately: true);
+
+            if (exitCode != 0)
+                throw new InvalidOperationException($"Falha ao criar remote '{remoteName}': {stdErr}");
+
+            return $"Remote '{remoteName}:' criado e autenticado via Link (OAuth no navegador).";
+        }
+
+        var usedStrategy = string.Empty;
+        if (IsRcDaemonRunning)
+        {
+            try
+            {
+                using var rc = new RcloneRcClient(_rcdPort, TimeSpan.FromSeconds(15));
+                if (req.IsUpdate)
+                {
+                    await rc.UpdateRemoteAsync(remoteName, cleanParams, req.ObscurePasswords, ct);
+                    usedStrategy = $"RC API (/config/update, porta {_rcdPort})";
+                }
+                else
+                {
+                    await rc.CreateRemoteAsync(remoteName, req.Type.Trim(), cleanParams, req.ObscurePasswords, ct);
+                    usedStrategy = $"RC API (/config/create, porta {_rcdPort})";
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"Operação /config/{(req.IsUpdate ? "update" : "create")} via RC falhou ({ex.Message}); alternando para CLI.");
+            }
+        }
+
+        if (string.IsNullOrEmpty(usedStrategy))
+        {
+            var args = req.IsUpdate
+                ? new List<string> { "config", "update", remoteName }
+                : new List<string> { "config", "create", remoteName, req.Type.Trim() };
+
+            foreach (var (k, v) in cleanParams)
+            {
+                args.Add($"{k}={v}");
+            }
+            if (req.ObscurePasswords)
+                args.Add("--obscure");
+            args.Add("--non-interactive");
+
+            var (exitCode, _, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
+                config.RcloneExecutablePath,
+                config.RcloneConfigPath,
+                config.WorkingDirectory,
+                args,
+                ct,
+                closeStdInImmediately: true);
+
+            if (exitCode != 0)
+                throw new InvalidOperationException($"rclone config {(req.IsUpdate ? "update" : "create")} falhou: {stdErr}");
+
+            usedStrategy = $"CLI (rclone config {(req.IsUpdate ? "update" : "create")})";
+        }
+
+        if (req.IsUpdate && effectiveAuthMode == RemoteAuthMode.OAuthBrowserLink)
+        {
+            var oauthMsg = await ReconnectRemoteOAuthAsync(config, remoteName, ct);
+            return $"{usedStrategy} + {oauthMsg}";
+        }
+
+        var modeDesc = effectiveAuthMode == RemoteAuthMode.ManualTokenJson
+            ? "Token JSON Manual"
+            : "Chave / Credenciais";
+        _log.Info($"Remote '{remoteName}' salvo ({modeDesc}) via {usedStrategy}.");
+        return $"Remote '{remoteName}:' salvo ({modeDesc}) via {usedStrategy}.";
+    }
+
+    public async Task<string> ReconnectRemoteOAuthAsync(
+        AppManagerConfig config,
+        string remoteName,
+        CancellationToken ct = default)
+    {
+        var cleanName = remoteName.Trim().TrimEnd(':');
+        if (!IsValidRemoteName(cleanName))
+            throw new ArgumentException("Nome de remote inválido.");
+
+        using var oauthCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        oauthCts.CancelAfter(TimeSpan.FromMinutes(3));
+
+        _log.Info($"Abrindo reconexão OAuth no navegador para '{cleanName}:'...");
+        var (exitCode, _, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
+            config.RcloneExecutablePath,
+            config.RcloneConfigPath,
+            config.WorkingDirectory,
+            new[] { "config", "reconnect", $"{cleanName}:" },
+            oauthCts.Token,
+            closeStdInImmediately: true);
+
+        if (exitCode != 0)
+            throw new InvalidOperationException($"rclone config reconnect falhou: {stdErr}");
+
+        _log.Info($"Remote '{cleanName}:' reautenticado com sucesso.");
+        return $"Reautenticação OAuth concluída para '{cleanName}:'.";
+    }
+
+    public async Task<string> DeleteRemoteHybridAsync(
+        AppManagerConfig config,
+        string remoteName,
+        CancellationToken ct = default)
+    {
+        var cleanName = remoteName.Trim().TrimEnd(':');
+        if (!IsValidRemoteName(cleanName))
+            throw new ArgumentException("Nome de remote inválido.");
+
+        if (IsRcDaemonRunning)
+        {
+            try
+            {
+                using var rc = new RcloneRcClient(_rcdPort);
+                await rc.DeleteRemoteAsync(cleanName, ct);
+                _log.Info($"Remote '{cleanName}' excluído via RC API.");
+                return $"Remote '{cleanName}:' excluído via RC API (/config/delete).";
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"Exclusão via RC falhou ({ex.Message}); alternando para CLI.");
+            }
+        }
+
+        var (exitCode, _, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
+            config.RcloneExecutablePath,
+            config.RcloneConfigPath,
+            config.WorkingDirectory,
+            new[] { "config", "delete", cleanName },
+            ct);
+
+        if (exitCode != 0)
+            throw new InvalidOperationException($"rclone config delete falhou: {stdErr}");
+
+        _log.Info($"Remote '{cleanName}' excluído via CLI.");
+        return $"Remote '{cleanName}:' excluído via CLI (rclone config delete).";
+    }
+
+    public async Task<RemoteTestResult> TestRemoteConnectionAsync(
+        AppManagerConfig config,
+        string remoteName,
+        CancellationToken ct = default)
+    {
+        var cleanName = remoteName.Trim().TrimEnd(':');
+        var remoteFs = $"{cleanName}:";
+
+        using var testCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        testCts.CancelAfter(TimeSpan.FromSeconds(20));
+
+        try
+        {
+            var (exitCode, stdOut, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
+                config.RcloneExecutablePath,
+                config.RcloneConfigPath,
+                config.WorkingDirectory,
+                new[] { "lsd", remoteFs, "--max-depth", "1" },
+                testCts.Token);
+
+            if (exitCode != 0)
+            {
+                return new RemoteTestResult
+                {
+                    Success = false,
+                    Message = string.IsNullOrWhiteSpace(stdErr) ? $"Falha com código {exitCode}." : stdErr.Trim()
+                };
+            }
+
+            var lines = stdOut.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
+            RcloneAboutInfo? about = null;
+            try { about = await GetRemoteAboutAsync(config, remoteFs, testCts.Token); } catch { }
+
+            return new RemoteTestResult
+            {
+                Success = true,
+                TopLevelEntriesCount = lines,
+                About = about,
+                Message = $"Conexão com '{remoteFs}' OK ({lines} pasta(s) na raiz)."
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            return new RemoteTestResult
+            {
+                Success = false,
+                Message = $"Tempo limite excedido ao conectar em '{remoteFs}'."
+            };
+        }
+    }
+
+    private static bool IsSensitiveParameter(string key) => SensitiveKeys.Contains(key);
+
+    private static bool IsValidRemoteName(string name)
+    {
+        return !string.IsNullOrWhiteSpace(name) &&
+               !name.Contains(':') &&
+               name.All(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.' or ' ');
     }
 
     public async Task<string> SetLiveBandwidthLimitAsync(AppManagerConfig config, string rate, CancellationToken ct = default)

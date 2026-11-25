@@ -1,4 +1,5 @@
 using RcloneManager.Core.Engine;
+using RcloneManager.Core.Security;
 
 namespace RcloneManager.Core.Models;
 
@@ -9,6 +10,10 @@ public sealed class AppManagerConfig
     public string WorkingDirectory { get; set; } = string.Empty;
     public string PinnedRcloneVersion { get; set; } = RcloneReleaseManager.DefaultPinnedVersion;
     public bool LockRcloneVersion { get; set; } = true;
+    public bool FirstRunCompleted { get; set; }
+    public bool EncryptionEnabled { get; set; } = true;
+    public string EncryptionKeyTarget { get; set; } = WindowsCredentialVault.DefaultTargetName;
+    public Dictionary<string, string> ProtectedSecrets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public int ServiceApiPort { get; set; } = 5580;
     public int PersistentRcdPort { get; set; } = 5572;
     public bool AutoStartRcdDaemon { get; set; } = true;
@@ -44,6 +49,9 @@ public sealed class ServiceStatusDto
     public int RcDaemonPort { get; set; }
     public string CurrentBandwidthLimit { get; set; } = "off";
     public bool StartupWithWindowsEnabled { get; set; }
+    public bool FirstRunCompleted { get; set; }
+    public bool EncryptionKeyActive { get; set; }
+    public string EncryptionKeyTarget { get; set; } = WindowsCredentialVault.DefaultTargetName;
     public ActiveJobExecutionInfo? ActiveJob { get; set; }
     public RcloneStats? LiveStats { get; set; }
     public List<SyncJob> Jobs { get; set; } = new();
@@ -72,4 +80,35 @@ public sealed class UpdateReleaseConfigRequest
     public string PinnedRcloneVersion { get; set; } = RcloneReleaseManager.DefaultPinnedVersion;
     public bool LockRcloneVersion { get; set; } = true;
     public string? RcloneExecutablePath { get; set; }
+}
+
+public sealed class ResetConfigRequest
+{
+    public bool DeleteCredentialKey { get; set; }
+    public bool DeleteLogsAndRuntime { get; set; }
+    public bool DeleteRcloneConf { get; set; }
+}
+
+public sealed class ExportedRemoteBlueprint
+{
+    public string Name { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public RemoteAuthMode SuggestedAuthMode { get; set; } = RemoteAuthMode.KeyOrCredentials;
+    public Dictionary<string, string> NonSensitiveParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool RequiresAuthentication { get; set; } = true;
+}
+
+public sealed class ExportedConfigBundle
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string Format { get; set; } = "RcloneManager.PortableConfig";
+    public DateTime ExportedAtUtc { get; set; } = DateTime.UtcNow;
+    public string PinnedRcloneVersion { get; set; } = RcloneReleaseManager.DefaultPinnedVersion;
+    public bool LockRcloneVersion { get; set; } = true;
+    public int ServiceApiPort { get; set; } = 5580;
+    public int PersistentRcdPort { get; set; } = 5572;
+    public bool AutoStartRcdDaemon { get; set; } = true;
+    public string GlobalBandwidthLimit { get; set; } = "off";
+    public List<ExportedRemoteBlueprint> Remotes { get; set; } = new();
+    public List<SyncJob> Jobs { get; set; } = new();
 }

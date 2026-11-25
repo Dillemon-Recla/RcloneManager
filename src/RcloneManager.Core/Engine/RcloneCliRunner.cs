@@ -22,12 +22,14 @@ public static class RcloneCliRunner
         string? rcloneConfigPath,
         string workingDirectory,
         IEnumerable<string> args,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool closeStdInImmediately = false)
     {
         var psi = new ProcessStartInfo
         {
             FileName = rcloneExePath,
             WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : AppContext.BaseDirectory,
+            RedirectStandardInput = closeStdInImmediately,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -47,11 +49,24 @@ public static class RcloneCliRunner
 
         using var process = new Process { StartInfo = psi };
         process.Start();
+        if (closeStdInImmediately)
+        {
+            try { process.StandardInput.Close(); } catch { }
+        }
 
         var stdOutTask = process.StandardOutput.ReadToEndAsync(ct);
         var stdErrTask = process.StandardError.ReadToEndAsync(ct);
 
-        await process.WaitForExitAsync(ct);
+        try
+        {
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
+
         var stdOut = await stdOutTask;
         var stdErr = await stdErrTask;
 
