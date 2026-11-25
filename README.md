@@ -2,6 +2,8 @@
 
 Interface Desktop (**WPF**) e Serviço em segundo plano (**ASP.NET Core + Windows Service**) em **.NET 10** para controlar o [Rclone](https://rclone.org/) no Windows com motor híbrido (**API HTTP RC + CLI**), agendador automático de tarefas, telemetria de transferências ao vivo, otimizador de filtros e provisionamento automático com trava de release (**SHA-256**).
 
+🌐 **Página do Projeto (GitHub Pages):** [dillemon-recla.github.io/RcloneManager](https://dillemon-recla.github.io/RcloneManager/)
+
 ---
 
 ## Principais Recursos
@@ -16,10 +18,21 @@ Interface Desktop (**WPF**) e Serviço em segundo plano (**ASP.NET Core + Window
 - **Agendador Automático (`JobScheduler`)**:
   - Modos `IntervalMinutes`, `DailyAtTime`, `WeeklyDays` e `OnServiceStart`.
   - Fila sequencial com retentativas configuráveis em caso de falhas transitórias de rede/DNS (`RetryOnFailure`, `MaxRetries`, `RetryDelayMinutes`).
+- **Assistente Inicial (First-Run Wizard) & Reset Granular**:
+  - Na primeira execução (ou ao importar uma configuração), o Wizard (`FirstRunWizardWindow`) conduz: importação opcional, geração de chave AES-256 no Windows Credential Manager, verificação/download da release travada, autenticação dos serviços apontados e revisão das tarefas.
+  - Opção dedicada (`ResetConfigWindow`) para resetar configurações, limpar logs/runtime, rotacionar/excluir a chave do cofre ou apagar `rclone.conf` (com backup `.bak`).
+- **Gerenciamento Visual de Remotes (`rclone.conf`) com 3 Modos**:
+  - Ponte direta para os **71+ provedores** do Rclone (`/config/providers` e `/config/dump`), com mascaramento de tokens, teste de conexão (`rclone lsd` + `/operations/about`) e terminal opcional `rclone config`.
+  - Escolha explícita de autenticação: **Via Link (Navegador / OAuth)** (com orientação de `client_id` próprio no Google Drive), **Via Token JSON Manual** (com validação JSON e botão `rclone authorize`) ou **Via Chave / Credenciais** (S3, SFTP, senha ou `service_account_file` com seletor de arquivo).
+- **Segurança no Cofre do Windows & Exportação Portátil**:
+  - Gera automaticamente uma chave mestra **AES-256** armazenada no **Gerenciador de Credenciais do Windows** (`RcloneManager:MasterKey`) via `advapi32.dll` para proteger dados sensíveis locais em repouso (`AES-256-GCM`, `enc:v1:...`).
+  - A exportação gera um arquivo portátil **sem credenciais, tokens ou chave principal** — contendo apenas tarefas sanitizadas e o blueprint dos serviços utilizados para reautenticação guiada pelo Wizard em outra máquina.
 - **Auto-Download e Trava de Release (`RcloneReleaseManager`)**:
   - Se `rclone.exe` não existir ou divergir da versão travada (padrão `v1.76.0`), a UI baixa o `.zip` oficial (`downloads.rclone.org` com fallback para GitHub Releases), valida o hash **SHA-256**, extrai e confirma a versão executando `rclone.exe version`.
 - **Analisador e Otimizador de Filtros (`FilterFileHelper`)**:
   - Detecta mistura de `--exclude-from` com regras `+ ` (`--filter-from`), sintaxe inline inválida (`- * [-- max-size ...]`) e problemas de precedência (*first-match-wins*), sanitizando automaticamente em tempo de execução e oferecendo correção definitiva com backup `.bak`.
+- **Menus Clássicos & Janela Sobre**:
+  - Barra de menus **Arquivo** e **Ajuda** (atalhos `Ctrl+N` / `Ctrl+S`, exportação/importação, diagnóstico e janela **Sobre** com tecnologias e licença MIT).
 - **Zero dependências NuGet externas**: construído apenas com os frameworks nativos do SDK **.NET 10** (`net10.0` / `net10.0-windows`).
 
 ---
@@ -45,9 +58,9 @@ RcloneManager.sln
 ├── LICENSE                                 # Licença MIT
 ├── docs/                                   # Documentação técnica detalhada
 └── src/
-    ├── RcloneManager.Core/                 # Modelos, Motor Híbrido, Agendador, Filtros e Release Manager
+    ├── RcloneManager.Core/                 # Modelos, Motor Híbrido, Agendador, Cofre AES-256, Filtros e Release Manager
     ├── RcloneManager.Service/              # Serviço em 2º plano, API HTTP (:5580) e dispatcher Windows Service
-    └── RcloneManager.UI/                   # Interface WPF (Dark UI), diálogo de setup e System Tray
+    └── RcloneManager.UI/                   # Interface WPF (Dark UI), Wizard inicial, Remotes, Sobre e System Tray
 ```
 
 ---
@@ -57,7 +70,6 @@ RcloneManager.sln
 ### Pré-requisitos
 - **Windows 10 / 11** (`x64`, `arm64` ou `x86`)
 - **.NET 10 SDK** (para compilar) ou **.NET 10 Desktop + ASP.NET Core Runtime** (para executar os binários compilados)
-- Um remote configurado no Rclone (ex.: via `rclone config` em `%AppData%\rclone\rclone.conf`)
 
 ### Compilar e Executar
 
@@ -71,8 +83,8 @@ dotnet build RcloneManager.sln -c Release
 
 Em seguida, execute **[Iniciar-RcloneManager.bat](Iniciar-RcloneManager.bat)** (ou abra diretamente `src\RcloneManager.UI\bin\Release\net10.0-windows\RcloneManager.UI.exe`):
 
-1. Na primeira abertura, se `rclone.exe` não estiver presente (ou estiver em versão diferente da release travada `v1.76.0`), a janela `RcloneSetupWindow` fará o download oficial com verificação **SHA-256** automaticamente.
-2. A UI iniciará o `RcloneManager.Service` em segundo plano na porta `127.0.0.1:5580` e criará o arquivo local `rclone_manager_config.json`.
+1. Na primeira execução, o **Assistente Inicial (Wizard)** gera a chave AES-256 no Gerenciador de Credenciais do Windows, permite importar uma configuração exportada anteriormente (opcional), verifica/baixa o `rclone.exe` travado (`v1.76.0`, SHA-256), conduz a autenticação dos remotes (via Link OAuth, Token JSON ou Chave/Credenciais) e exibe a revisão das tarefas.
+2. A UI inicia automaticamente o `RcloneManager.Service` em segundo plano na porta `127.0.0.1:5580` e mantém o agendador ativo mesmo ao minimizar ou fechar a janela.
 
 ---
 
@@ -80,9 +92,30 @@ Em seguida, execute **[Iniciar-RcloneManager.bat](Iniciar-RcloneManager.bat)** (
 
 - [Arquitetura e Motor Híbrido (RC + CLI)](docs/arquitetura-e-motor-hibrido.md)
 - [API HTTP Local e Modos do Serviço](docs/api-local-servico.md)
+- [Segurança, Remotes (3 Modos), Wizard e Exportação Portátil](docs/seguranca-remotes-e-wizard.md)
 - [Provisionamento Automático e Trava de Release](docs/provisionamento-e-trava-release.md)
 - [Regras de Filtro e Otimizador](docs/filtros-e-otimizador.md)
 - [Operação, Serviço Windows e Solução de Problemas](docs/operacao-e-servico-windows.md)
+
+---
+
+## Contribuições
+
+Contribuições são muito bem-vindas! Você pode ajudar abrindo **Issues** (bugs, sugestões de melhoria ou dúvidas) ou enviando **Pull Requests** na branch `dev`.
+
+---
+
+## Apoie o Projeto
+
+Se o **RcloneManager** facilita sua rotina de backups e sincronizações, você pode apoiar o desenvolvimento:
+
+- **GitHub Sponsors (Internacional / Devs):** [github.com/sponsors/Dillemon-Recla](https://github.com/sponsors/Dillemon-Recla)
+- **Ko-fi (Apoio avulso / Internacional):** [ko-fi.com/dillemonrecla](https://ko-fi.com/dillemonrecla)
+- **Pix (Brasil — Chave Aleatória):** `95b9aa86-3c99-421d-9c86-6a47a3b09d7b`
+
+<p>
+  <img src="docs/assets/pix-qrcode.png" alt="QR Code Pix para apoiar o RcloneManager" width="180" />
+</p>
 
 ---
 

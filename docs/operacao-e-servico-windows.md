@@ -35,6 +35,13 @@ Execute `Iniciar-RcloneManager.bat` na raiz do repositório. O script compila au
 
 ---
 
+## Menus da Interface (`Arquivo` e `Ajuda`)
+
+- **Arquivo**: `Nova Tarefa` (`Ctrl+N`), `Salvar Alterações da Aba Atual` (`Ctrl+S`), atalhos rápidos para abrir pasta de trabalho / `rclone_manager_config.json` / pasta de logs, **Exportar Configuração** (portátil sem credenciais), **Importar Configuração** (via Wizard), **Executar Assistente Inicial (Wizard)**, **Resetar / Deletar Configurações**, minimizar para bandeja e sair.
+- **Ajuda**: abrir pasta `docs/`, repositório no GitHub, documentação oficial do Rclone, **Verificar Release Travada**, **Copiar Informações de Diagnóstico** e janela **Sobre** (com versões em execução, licença MIT e lista de componentes).
+
+---
+
 ## Bandeja do Sistema (`TrayIconHelper`)
 
 Ao clicar no botão fechar (`X`) da janela principal, você escolhe entre:
@@ -50,7 +57,8 @@ O menu de contexto do ícone na bandeja permite reabrir o painel, executar o bac
 
 - **`rclone_manager_config.json`**:
   - Gerado na primeira execução na raiz do workspace (importa automaticamente `script.bat` e `exclude_user_folder.txt` se existirem).
-  - Guarda `rcloneExecutablePath`, `rcloneConfigPath`, `workingDirectory`, `pinnedRcloneVersion` (`v1.76.0`), `lockRcloneVersion` (`true`), portas (`5580` e `5572`), `globalBandwidthLimit` e a lista `jobs`.
+  - Guarda `rcloneExecutablePath`, `rcloneConfigPath`, `workingDirectory`, `pinnedRcloneVersion` (`v1.76.0`), `lockRcloneVersion` (`true`), `firstRunCompleted`, `encryptionEnabled`, `encryptionKeyTarget` (`RcloneManager:MasterKey`), `protectedSecrets`, portas (`5580` e `5572`), `globalBandwidthLimit` e a lista `jobs`.
+  - Campos sensíveis (`rcloneConfigPath`, `protectedSecrets` e `extraFlags` das tarefas) são gravados cifrados com **AES-256-GCM** (`enc:v1:...`) usando a chave armazenada no Gerenciador de Credenciais do Windows.
 - **`rclone_manager_service.log`**: registra eventos do serviço, escolha da estratégia híbrida, avisos de sanitização de filtro e erros do agendador.
 - **`rclone_backup.log`**: log padrão gravado pelo `rclone.exe` durante execuções de tarefas (`--log-file`).
 
