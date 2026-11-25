@@ -2,8 +2,8 @@
 setlocal
 cd /d "%~dp0"
 
-set "UI_EXE=%~dp0src\RcloneManager.UI\bin\Release\net8.0-windows\RcloneManager.UI.exe"
-set "SVC_EXE=%~dp0src\RcloneManager.Service\bin\Release\net8.0\RcloneManager.Service.exe"
+set "UI_EXE=%~dp0src\RcloneManager.UI\bin\Release\net10.0-windows\RcloneManager.UI.exe"
+set "SVC_EXE=%~dp0src\RcloneManager.Service\bin\Release\net10.0\RcloneManager.Service.exe"
 
 if not exist "%UI_EXE%" (
     echo Compilando RcloneManager em modo Release...

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using RcloneManager.Core.Storage;
 
 namespace RcloneManager.UI.Services;
 
@@ -7,19 +8,7 @@ public static class ServiceLauncher
 {
     public static string ResolveWorkspaceDirectory()
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        for (var depth = 0; depth < 6 && dir != null; depth++)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "rclone.exe")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-
-        var cwd = Directory.GetCurrentDirectory();
-        if (File.Exists(Path.Combine(cwd, "rclone.exe")))
-            return cwd;
-
-        return AppContext.BaseDirectory;
+        return WorkspacePathResolver.ResolveRootDirectory();
     }
 
     public static async Task<bool> EnsureServiceRunningAsync(ServiceApiClient api, CancellationToken ct = default)
@@ -90,8 +79,8 @@ public static class ServiceLauncher
             Path.Combine(AppContext.BaseDirectory, "RcloneManager.Service.exe"),
             Path.Combine(workDir, "RcloneManager.Service.exe"),
             Path.Combine(workDir, "publish", "RcloneManager.Service.exe"),
-            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Release", "net8.0", "RcloneManager.Service.exe"),
-            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Debug", "net8.0", "RcloneManager.Service.exe")
+            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Release", "net10.0", "RcloneManager.Service.exe"),
+            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Debug", "net10.0", "RcloneManager.Service.exe")
         };
 
         return candidates.FirstOrDefault(File.Exists);

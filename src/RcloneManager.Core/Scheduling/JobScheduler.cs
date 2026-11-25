@@ -39,12 +39,34 @@ public sealed class JobScheduler
                 RcloneExecutablePath = _config.RcloneExecutablePath,
                 RcloneConfigPath = _config.RcloneConfigPath,
                 WorkingDirectory = _config.WorkingDirectory,
+                PinnedRcloneVersion = _config.PinnedRcloneVersion,
+                LockRcloneVersion = _config.LockRcloneVersion,
                 ServiceApiPort = _config.ServiceApiPort,
                 PersistentRcdPort = _config.PersistentRcdPort,
                 AutoStartRcdDaemon = _config.AutoStartRcdDaemon,
                 GlobalBandwidthLimit = _config.GlobalBandwidthLimit,
                 Jobs = _config.Jobs.Select(CloneJob).ToList()
             };
+        }
+    }
+
+    public AppManagerConfig UpdateReleaseSettings(string pinnedVersion, bool lockVersion, string? executablePath)
+    {
+        var normalized = RcloneReleaseManager.NormalizeVersion(pinnedVersion);
+        lock (_configLock)
+        {
+            _config.PinnedRcloneVersion = normalized;
+            _config.LockRcloneVersion = lockVersion;
+            if (!string.IsNullOrWhiteSpace(executablePath))
+                _config.RcloneExecutablePath = executablePath;
+
+            if (string.IsNullOrWhiteSpace(_config.RcloneConfigPath))
+                _config.RcloneConfigPath = AppConfigStore.DetectRcloneConfigPath(_config.RcloneExecutablePath);
+
+            _store.Save(_config);
+            _engine.InvalidateVersionCache();
+            _log.Info($"Configuração de release atualizada: Versão={normalized}, Travada={lockVersion}, Exe='{_config.RcloneExecutablePath}'.");
+            return GetConfigSnapshot();
         }
     }
 

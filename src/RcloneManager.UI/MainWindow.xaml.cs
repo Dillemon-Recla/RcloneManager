@@ -6,7 +6,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using RcloneManager.Core.Engine;
 using RcloneManager.Core.Models;
+using RcloneManager.Core.Storage;
 using RcloneManager.UI.Services;
 using WinForms = System.Windows.Forms;
 
@@ -45,6 +47,7 @@ public partial class MainWindow : Window
     private bool _isUpdatingJobsGrid;
     private bool _initialFilterLoaded;
     private bool _initialRemotesLoaded;
+    private bool _initialReleaseFieldsLoaded;
     private bool _pollInFlight;
 
     public MainWindow()
@@ -71,6 +74,40 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var store = new AppConfigStore(workDir);
+        var cfg = store.LoadOrCreateDefault();
+
+        PinnedVersionBox.Text = cfg.PinnedRcloneVersion;
+        LockVersionCheck.IsChecked = cfg.LockRcloneVersion;
+        _initialReleaseFieldsLoaded = true;
+
+        FooterInfoText.Text = "Verificando release do Rclone...";
+        var check = await RcloneReleaseManager.CheckInstallationAsync(cfg, workDir);
+        ReleaseStatusText.Text = $"{check.StatusMessage} ({check.ExecutablePath})";
+
+        if (check.NeedsDownload)
+        {
+            FooterInfoText.Text = check.StatusMessage;
+            var setupWindow = new RcloneSetupWindow(workDir, check.PinnedVersion, check.StatusMessage)
+            {
+                Owner = this
+            };
+
+            if (setupWindow.ShowDialog() == true && !string.IsNullOrWhiteSpace(setupWindow.DownloadedExecutablePath))
+            {
+                cfg.RcloneExecutablePath = setupWindow.DownloadedExecutablePath;
+                if (string.IsNullOrWhiteSpace(cfg.RcloneConfigPath))
+                    cfg.RcloneConfigPath = AppConfigStore.DetectRcloneConfigPath(cfg.RcloneExecutablePath);
+                store.Save(cfg);
+                ReleaseStatusText.Text = $"Rclone {check.PinnedVersion} baixado e travado em '{cfg.RcloneExecutablePath}'.";
+            }
+            else
+            {
+                FooterInfoText.Text = "Provisionamento do Rclone cancelado. Você pode baixar/travar na aba 'Logs & Serviço'.";
+            }
+        }
+
         FooterInfoText.Text = "Verificando serviço em segundo plano...";
         var ok = await ServiceLauncher.EnsureServiceRunningAsync(_api);
         if (!ok)
@@ -107,7 +144,34 @@ public partial class MainWindow : Window
 
             ServiceStatusDot.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
             ServiceStatusText.Text = $"Serviço Ativo (desde {status.ServiceStartedAt:HH:mm:ss})";
-            RcloneVersionText.Text = $"rclone {status.RcloneVersion}";
+
+            if (status.LockRcloneVersion)
+            {
+                if (status.IsRcloneVersionValid)
+                {
+                    RcloneVersionText.Text = $"rclone {status.RcloneVersion} [Trava Ativa]";
+                    RcloneVersionText.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
+                }
+                else
+                {
+                    RcloneVersionText.Text = $"rclone {status.RcloneVersion} [DIVERGENTE de {status.PinnedRcloneVersion}]";
+                    RcloneVersionText.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 158, 11));
+                }
+            }
+            else
+            {
+                RcloneVersionText.Text = $"rclone {status.RcloneVersion} [Sem Trava]";
+                RcloneVersionText.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(148, 163, 184));
+            }
+
+            ReleaseStatusText.Text = $"Instalado: {status.RcloneVersion} | Travado em: {status.PinnedRcloneVersion} ({(status.LockRcloneVersion ? "Trava Ativa" : "Livre")}) | Caminho: {status.RcloneExecutablePath}";
+            if (!_initialReleaseFieldsLoaded && !PinnedVersionBox.IsKeyboardFocusWithin)
+            {
+                PinnedVersionBox.Text = status.PinnedRcloneVersion;
+                LockVersionCheck.IsChecked = status.LockRcloneVersion;
+                _initialReleaseFieldsLoaded = true;
+            }
+
             RcdStatusText.Text = status.RcDaemonRunning
                 ? $"Daemon RC: Ativo (porta {status.RcDaemonPort})"
                 : "Daemon RC: Desligado (CLI sob demanda)";
@@ -786,6 +850,104 @@ public partial class MainWindow : Window
         RunElevatedServiceCommand("--uninstall-service", "Serviço do Windows removido via sc.exe.");
     }
 
+    private async void ApplyPinnedReleaseButton_Click(object sender, RoutedEventArgs e)
+    {
+        string targetVersion;
+        try
+        {
+            targetVersion = RcloneReleaseManager.NormalizeVersion(PinnedVersionBox.Text);
+            PinnedVersionBox.Text = targetVersion;
+        }
+        catch (ArgumentException ex)
+        {
+            System.Windows.MessageBox.Show(ex.Message, "Versão Inválida", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        ApplyPinnedReleaseButton.IsEnabled = false;
+        try
+        {
+            var lockEnabled = LockVersionCheck.IsChecked == true;
+            var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+            var store = new AppConfigStore(workDir);
+            var cfg = store.LoadOrCreateDefault();
+            cfg.PinnedRcloneVersion = targetVersion;
+            cfg.LockRcloneVersion = lockEnabled;
+
+            var serviceOnline = false;
+            try
+            {
+                var st = await _api.GetStatusAsync();
+                serviceOnline = st is { ServiceRunning: true };
+            }
+            catch
+            {
+                serviceOnline = false;
+            }
+
+            if (serviceOnline)
+            {
+                await _api.StopRcdAsync();
+            }
+
+            var check = await RcloneReleaseManager.CheckInstallationAsync(cfg, workDir);
+            var expectedExe = RcloneReleaseManager.GetExpectedExecutablePath(workDir, targetVersion);
+
+            if (check.NeedsDownload || !File.Exists(expectedExe))
+            {
+                var setupWindow = new RcloneSetupWindow(
+                    workDir,
+                    targetVersion,
+                    $"Provisionando e travando a release {targetVersion}...")
+                {
+                    Owner = this
+                };
+
+                if (setupWindow.ShowDialog() != true || string.IsNullOrWhiteSpace(setupWindow.DownloadedExecutablePath))
+                {
+                    FooterInfoText.Text = "Alteração de release cancelada.";
+                    return;
+                }
+
+                cfg.RcloneExecutablePath = setupWindow.DownloadedExecutablePath;
+            }
+            else
+            {
+                cfg.RcloneExecutablePath = expectedExe;
+            }
+
+            if (string.IsNullOrWhiteSpace(cfg.RcloneConfigPath))
+                cfg.RcloneConfigPath = AppConfigStore.DetectRcloneConfigPath(cfg.RcloneExecutablePath);
+
+            store.Save(cfg);
+
+            if (serviceOnline)
+            {
+                await _api.UpdateReleaseConfigAsync(new UpdateReleaseConfigRequest
+                {
+                    PinnedRcloneVersion = targetVersion,
+                    LockRcloneVersion = lockEnabled,
+                    RcloneExecutablePath = cfg.RcloneExecutablePath
+                });
+                await PollServiceAsync();
+            }
+            else
+            {
+                ReleaseStatusText.Text = $"Pronto: {targetVersion} em '{cfg.RcloneExecutablePath}'.";
+            }
+
+            FooterInfoText.Text = $"Release {targetVersion} aplicada ({(lockEnabled ? "travada" : "sem trava")}).";
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Erro ao baixar/travar release: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            ApplyPinnedReleaseButton.IsEnabled = true;
+        }
+    }
+
     private void RunElevatedServiceCommand(string flag, string successMsg)
     {
         var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
@@ -793,8 +955,8 @@ public partial class MainWindow : Window
         {
             Path.Combine(AppContext.BaseDirectory, "RcloneManager.Service.exe"),
             Path.Combine(workDir, "RcloneManager.Service.exe"),
-            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Release", "net8.0", "RcloneManager.Service.exe"),
-            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Debug", "net8.0", "RcloneManager.Service.exe")
+            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Release", "net10.0", "RcloneManager.Service.exe"),
+            Path.Combine(workDir, "src", "RcloneManager.Service", "bin", "Debug", "net10.0", "RcloneManager.Service.exe")
         };
 
         var exe = candidates.FirstOrDefault(File.Exists);

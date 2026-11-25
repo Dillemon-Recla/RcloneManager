@@ -72,11 +72,14 @@ public sealed class AppConfigStore
 
     private void EnsurePathsPopulated(AppManagerConfig config)
     {
+        if (string.IsNullOrWhiteSpace(config.PinnedRcloneVersion))
+            config.PinnedRcloneVersion = RcloneReleaseManager.DefaultPinnedVersion;
+
         if (string.IsNullOrWhiteSpace(config.WorkingDirectory) || !Directory.Exists(config.WorkingDirectory))
             config.WorkingDirectory = BaseDirectory;
 
         if (string.IsNullOrWhiteSpace(config.RcloneExecutablePath) || !File.Exists(config.RcloneExecutablePath))
-            config.RcloneExecutablePath = Path.Combine(BaseDirectory, "rclone.exe");
+            config.RcloneExecutablePath = WorkspacePathResolver.FindRcloneExecutable(BaseDirectory, config.PinnedRcloneVersion);
 
         if (string.IsNullOrWhiteSpace(config.RcloneConfigPath))
             config.RcloneConfigPath = DetectRcloneConfigPath(config.RcloneExecutablePath);
@@ -84,9 +87,9 @@ public sealed class AppConfigStore
 
     private AppManagerConfig CreateDefaultConfig()
     {
-        var rcloneExe = Path.Combine(BaseDirectory, "rclone.exe");
+        var rcloneExe = WorkspacePathResolver.FindRcloneExecutable(BaseDirectory, RcloneReleaseManager.DefaultPinnedVersion);
         var rcloneConf = DetectRcloneConfigPath(rcloneExe);
-        var filterFile = Path.Combine(BaseDirectory, "exclude_user_folder.txt");
+        var filterFile = WorkspacePathResolver.FindExistingFilterFile(BaseDirectory);
         var logFile = Path.Combine(BaseDirectory, "rclone_backup.log");
 
         var config = new AppManagerConfig
@@ -94,6 +97,8 @@ public sealed class AppConfigStore
             WorkingDirectory = BaseDirectory,
             RcloneExecutablePath = rcloneExe,
             RcloneConfigPath = rcloneConf,
+            PinnedRcloneVersion = RcloneReleaseManager.DefaultPinnedVersion,
+            LockRcloneVersion = true,
             ServiceApiPort = 5580,
             PersistentRcdPort = 5572,
             AutoStartRcdDaemon = true,

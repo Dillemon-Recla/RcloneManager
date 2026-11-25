@@ -45,6 +45,29 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
         lock (_stateLock) return _liveStats;
     }
 
+    public void InvalidateVersionCache()
+    {
+        _cachedRcloneVersion = string.Empty;
+    }
+
+    public async Task<(bool IsValid, string ErrorMessage)> ValidatePinnedVersionAsync(AppManagerConfig config, CancellationToken ct = default)
+    {
+        if (!config.LockRcloneVersion)
+            return (true, string.Empty);
+
+        var pinned = RcloneReleaseManager.TryNormalizeVersion(config.PinnedRcloneVersion, out var norm)
+            ? norm
+            : RcloneReleaseManager.DefaultPinnedVersion;
+
+        var actual = await GetRcloneVersionAsync(config, ct);
+        if (!string.Equals(actual, pinned, StringComparison.OrdinalIgnoreCase))
+        {
+            return (false, $"Execução bloqueada pela trava de versão: esperado '{pinned}', encontrado '{actual}' em '{config.RcloneExecutablePath}'.");
+        }
+
+        return (true, string.Empty);
+    }
+
     public async Task<string> GetRcloneVersionAsync(AppManagerConfig config, CancellationToken ct = default)
     {
         if (!string.IsNullOrWhiteSpace(_cachedRcloneVersion))
@@ -102,6 +125,13 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
         if (!File.Exists(config.RcloneExecutablePath))
         {
             _log.Error($"rclone.exe não encontrado em '{config.RcloneExecutablePath}'.");
+            return false;
+        }
+
+        var (versionValid, versionError) = await ValidatePinnedVersionAsync(config, ct);
+        if (!versionValid)
+        {
+            _log.Error(versionError);
             return false;
         }
 
@@ -392,6 +422,13 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
         if (!File.Exists(config.RcloneExecutablePath))
             return (false, false, $"Executável rclone.exe não encontrado em '{config.RcloneExecutablePath}'.", 0);
 
+        var (versionValid, versionError) = await ValidatePinnedVersionAsync(config, serviceShutdownToken);
+        if (!versionValid)
+        {
+            _log.Error(versionError);
+            return (false, false, versionError, 0);
+        }
+
         CancellationTokenSource jobCts;
         lock (_stateLock)
         {
@@ -560,9 +597,8 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
         var errorLines = new List<string>();
         var stdOutTask = Task.Run(async () =>
         {
-            while (!process.StandardOutput.EndOfStream)
+            while (await process.StandardOutput.ReadLineAsync() is { } line)
             {
-                var line = await process.StandardOutput.ReadLineAsync();
                 if (!string.IsNullOrWhiteSpace(line))
                     _log.Info($"[rclone] {line}");
             }
@@ -570,9 +606,8 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
 
         var stdErrTask = Task.Run(async () =>
         {
-            while (!process.StandardError.EndOfStream)
+            while (await process.StandardError.ReadLineAsync() is { } line)
             {
-                var line = await process.StandardError.ReadLineAsync();
                 if (!string.IsNullOrWhiteSpace(line))
                 {
                     lock (errorLines)

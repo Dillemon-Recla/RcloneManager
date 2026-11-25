@@ -1,3 +1,5 @@
+using RcloneManager.Core.Engine;
+
 namespace RcloneManager.Core.Models;
 
 public sealed class AppManagerConfig
@@ -5,6 +7,8 @@ public sealed class AppManagerConfig
     public string RcloneExecutablePath { get; set; } = string.Empty;
     public string RcloneConfigPath { get; set; } = string.Empty;
     public string WorkingDirectory { get; set; } = string.Empty;
+    public string PinnedRcloneVersion { get; set; } = RcloneReleaseManager.DefaultPinnedVersion;
+    public bool LockRcloneVersion { get; set; } = true;
     public int ServiceApiPort { get; set; } = 5580;
     public int PersistentRcdPort { get; set; } = 5572;
     public bool AutoStartRcdDaemon { get; set; } = true;
@@ -31,6 +35,9 @@ public sealed class ServiceStatusDto
     public DateTime ServiceStartedAt { get; set; }
     public DateTime ServerTimeUtc { get; set; } = DateTime.UtcNow;
     public string RcloneVersion { get; set; } = string.Empty;
+    public string PinnedRcloneVersion { get; set; } = RcloneReleaseManager.DefaultPinnedVersion;
+    public bool LockRcloneVersion { get; set; } = true;
+    public bool IsRcloneVersionValid { get; set; }
     public string RcloneExecutablePath { get; set; } = string.Empty;
     public string RcloneConfigPath { get; set; } = string.Empty;
     public bool RcDaemonRunning { get; set; }
@@ -58,4 +65,11 @@ public sealed class FilterFilePayload
 {
     public string FilePath { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
+}
+
+public sealed class UpdateReleaseConfigRequest
+{
+    public string PinnedRcloneVersion { get; set; } = RcloneReleaseManager.DefaultPinnedVersion;
+    public bool LockRcloneVersion { get; set; } = true;
+    public string? RcloneExecutablePath { get; set; }
 }

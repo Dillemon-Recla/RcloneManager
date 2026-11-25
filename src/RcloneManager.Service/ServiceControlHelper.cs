@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text;
 using Microsoft.Win32;
+using RcloneManager.Core.Storage;
 
 namespace RcloneManager.Service;
 
@@ -14,29 +15,17 @@ public static class ServiceControlHelper
 
     public static string ResolveWorkspaceDirectory(string[] args)
     {
+        string? explicitWorkDir = null;
         for (var i = 0; i < args.Length - 1; i++)
         {
-            if (args[i].Equals("--workdir", StringComparison.OrdinalIgnoreCase) && Directory.Exists(args[i + 1]))
-                return Path.GetFullPath(args[i + 1]);
+            if (args[i].Equals("--workdir", StringComparison.OrdinalIgnoreCase))
+            {
+                explicitWorkDir = args[i + 1];
+                break;
+            }
         }
 
-        var env = Environment.GetEnvironmentVariable("RCLONE_MANAGER_HOME");
-        if (!string.IsNullOrWhiteSpace(env) && Directory.Exists(env))
-            return Path.GetFullPath(env);
-
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        for (var depth = 0; depth < 6 && dir != null; depth++)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "rclone.exe")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-
-        var cwd = Directory.GetCurrentDirectory();
-        if (File.Exists(Path.Combine(cwd, "rclone.exe")))
-            return cwd;
-
-        return AppContext.BaseDirectory;
+        return WorkspacePathResolver.ResolveRootDirectory(explicitWorkDir);
     }
 
     public static bool IsStartupEnabled()

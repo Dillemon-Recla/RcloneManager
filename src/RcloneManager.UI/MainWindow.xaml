@@ -397,6 +397,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
@@ -448,6 +449,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
@@ -482,6 +484,31 @@
                     </Border>
 
                     <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                <TextBlock Text="Release do Rclone (Auto-Download &amp; Trava de Versão)" FontSize="13.5" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <WrapPanel VerticalAlignment="Center" Margin="0,0,0,4">
+                                    <TextBlock Text="Versão Travada:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox x:Name="PinnedVersionBox" Width="110" Text="v1.76.0" Margin="0,0,14,0"/>
+                                    <CheckBox x:Name="LockVersionCheck" Content="Travar nesta release (baixar automaticamente se ausente ou divergente)"
+                                              IsChecked="True" VerticalAlignment="Center"/>
+                                </WrapPanel>
+                                <TextBlock x:Name="ReleaseStatusText" Text="Status da release: verificando..."
+                                           Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+
+                            <Button x:Name="ApplyPinnedReleaseButton" Grid.Column="1" Content="Baixar / Travar Release"
+                                    Style="{StaticResource PrimaryButtonStyle}" VerticalAlignment="Center"
+                                    Click="ApplyPinnedReleaseButton_Click"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}" Margin="0,0,0,10">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Fonte do Log:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <ComboBox x:Name="LogSourceCombo" Width="230" SelectionChanged="LogControls_Changed" Margin="0,0,14,0">
@@ -501,7 +528,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}">
+                    <Border Grid.Row="3" Style="{StaticResource CardBorderStyle}">
                         <TextBox x:Name="LogsTextBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
                                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                                  TextWrapping="NoWrap"/>

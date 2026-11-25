@@ -150,6 +150,18 @@ public sealed class ServiceApiClient : IDisposable
         return await resp.Content.ReadFromJsonAsync<StartupToggleResponse>(JsonOptions, ct);
     }
 
+    public async Task StopRcdAsync(CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync("/api/rclone/stop-rcd", null, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    public async Task UpdateReleaseConfigAsync(UpdateReleaseConfigRequest req, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsJsonAsync("/api/rclone/release-config", req, JsonOptions, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
     public async Task ShutdownServiceAsync(CancellationToken ct = default)
     {
         using var resp = await _http.PostAsync("/api/service/shutdown", null, ct);

@@ -78,6 +78,7 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
     {
         var cfg = scheduler.GetConfigSnapshot();
         var rcloneVersion = await engine.GetRcloneVersionAsync(cfg, ct);
+        var (isVersionValid, _) = await engine.ValidatePinnedVersionAsync(cfg, ct);
 
         return Results.Ok(new ServiceStatusDto
         {
@@ -85,6 +86,9 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
             ServiceStartedAt = serviceStartedAt,
             ServerTimeUtc = DateTime.UtcNow,
             RcloneVersion = rcloneVersion,
+            PinnedRcloneVersion = cfg.PinnedRcloneVersion,
+            LockRcloneVersion = cfg.LockRcloneVersion,
+            IsRcloneVersionValid = isVersionValid,
             RcloneExecutablePath = cfg.RcloneExecutablePath,
             RcloneConfigPath = cfg.RcloneConfigPath,
             RcDaemonRunning = engine.IsRcDaemonRunning,
@@ -259,6 +263,45 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
         var analysis = FilterFileHelper.ApplyOptimizationWithBackup(targetPath);
         var content = File.ReadAllText(targetPath);
         return Results.Ok(new { optimized = true, analysis, content });
+    });
+
+    app.MapPost("/api/rclone/stop-rcd", async (RcloneHybridEngine engine) =>
+    {
+        if (engine.IsRcDaemonRunning)
+            await engine.StopRcDaemonAsync();
+        return Results.Ok(new { running = engine.IsRcDaemonRunning });
+    });
+
+    app.MapPost("/api/rclone/release-config", async (
+        UpdateReleaseConfigRequest req,
+        JobScheduler scheduler,
+        RcloneHybridEngine engine,
+        CancellationToken ct) =>
+    {
+        try
+        {
+            var normalized = RcloneReleaseManager.NormalizeVersion(req.PinnedRcloneVersion);
+            if (engine.IsRcDaemonRunning)
+                await engine.StopRcDaemonAsync();
+
+            var updated = scheduler.UpdateReleaseSettings(normalized, req.LockRcloneVersion, req.RcloneExecutablePath);
+            if (updated.AutoStartRcdDaemon && File.Exists(updated.RcloneExecutablePath))
+                await engine.StartRcDaemonAsync(updated, ct);
+
+            var ver = await engine.GetRcloneVersionAsync(updated, ct);
+            return Results.Ok(new
+            {
+                updated.PinnedRcloneVersion,
+                updated.LockRcloneVersion,
+                updated.RcloneExecutablePath,
+                rcloneVersion = ver,
+                rcDaemonRunning = engine.IsRcDaemonRunning
+            });
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     });
 
     app.MapPost("/api/service/startup", (bool enabled, JobScheduler scheduler) =>
