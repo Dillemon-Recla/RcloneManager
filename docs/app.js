@@ -1,10 +1,29 @@
 (() => {
   const PIX_KEY = "95b9aa86-3c99-421d-9c86-6a47a3b09d7b";
-  const GITHUB_BLOB_BASE = "https://github.com/Dillemon-Recla/RcloneManager/blob/main/docs/";
-  const GITHUB_API_DOCS = [
-    "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs",
-    "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs?ref=dev"
-  ];
+  const LANG_STORAGE_KEY = "rcloneManager.lang";
+
+  const DOCS_SOURCE_BY_LANG = {
+    pt: {
+      basePath: "",
+      manifest: "docs-manifest.json",
+      apiPaths: [
+        "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs",
+        "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs?ref=dev"
+      ],
+      blobBase: "https://github.com/Dillemon-Recla/RcloneManager/blob/main/docs/",
+      folderLabel: "docs/"
+    },
+    en: {
+      basePath: "en/",
+      manifest: "en/docs-manifest.json",
+      apiPaths: [
+        "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs/en",
+        "https://api.github.com/repos/Dillemon-Recla/RcloneManager/contents/docs/en?ref=dev"
+      ],
+      blobBase: "https://github.com/Dillemon-Recla/RcloneManager/blob/main/docs/en/",
+      folderLabel: "docs/en/"
+    }
+  };
 
   const buttonTimers = new WeakMap();
 
@@ -18,6 +37,57 @@
       buttonTimers.delete(btn);
     }, delayMs);
     buttonTimers.set(btn, timer);
+  }
+
+  function normalizeLang(raw) {
+    if (!raw || typeof raw !== "string") return null;
+    const lower = raw.trim().toLowerCase();
+    if (lower.startsWith("pt")) return "pt";
+    if (lower.startsWith("en")) return "en";
+    return null;
+  }
+
+  function detectInitialLanguage() {
+    const params = new URLSearchParams(window.location.search);
+    const urlLang = normalizeLang(params.get("lang"));
+    if (urlLang) return urlLang;
+
+    try {
+      const savedLang = normalizeLang(localStorage.getItem(LANG_STORAGE_KEY));
+      if (savedLang) return savedLang;
+    } catch {
+      // localStorage indisponível
+    }
+
+    const browserLangs =
+      Array.isArray(navigator.languages) && navigator.languages.length > 0
+        ? navigator.languages
+        : [navigator.language || navigator.userLanguage || "en"];
+
+    for (const candidate of browserLangs) {
+      const normalized = normalizeLang(candidate);
+      if (normalized) return normalized;
+      if (candidate && candidate.trim()) return "en";
+    }
+    return "en";
+  }
+
+  let currentLang = detectInitialLanguage();
+
+  function t(key, vars = null) {
+    const dict = window.RCLONE_PAGES_I18N || {};
+    const table = dict[currentLang] || dict.pt || {};
+    let str = table[key] ?? (dict.pt ? dict.pt[key] : undefined) ?? key;
+    if (vars && typeof str === "string") {
+      Object.entries(vars).forEach(([k, v]) => {
+        str = str.replaceAll(`{${k}}`, String(v));
+      });
+    }
+    return str;
+  }
+
+  function getDocsSource() {
+    return DOCS_SOURCE_BY_LANG[currentLang] || DOCS_SOURCE_BY_LANG.pt;
   }
 
   // Menu mobile
@@ -55,9 +125,9 @@
     copyQuickstartBtn.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(quickstartCode.innerText);
-        setTempButtonLabel(copyQuickstartBtn, "Copiado!", "Copiar", 1800);
+        setTempButtonLabel(copyQuickstartBtn, t("dyn.copied"), t("qs.copyBtn"), 1800);
       } catch {
-        setTempButtonLabel(copyQuickstartBtn, "Selecione manualmente", "Copiar", 2200);
+        setTempButtonLabel(copyQuickstartBtn, t("dyn.selectManual"), t("qs.copyBtn"), 2200);
       }
     });
   }
@@ -71,9 +141,9 @@
       if (pixTimer) clearTimeout(pixTimer);
       try {
         await navigator.clipboard.writeText(PIX_KEY);
-        pixFeedback.textContent = "Chave Pix copiada para a área de transferência!";
+        pixFeedback.textContent = t("dyn.pixCopied");
       } catch {
-        pixFeedback.textContent = `Copie manualmente: ${PIX_KEY}`;
+        pixFeedback.textContent = t("dyn.pixManual", { key: PIX_KEY });
       }
       pixTimer = setTimeout(() => { pixFeedback.textContent = ""; }, 3200);
     });
@@ -89,7 +159,11 @@
   }
 
   function normalizeDocLink(rawHref) {
-    return rawHref.trim().replace(/^\.\//, "").replace(/^docs\//i, "");
+    return rawHref
+      .trim()
+      .replace(/^\.\//, "")
+      .replace(/^docs\/(en\/)?/i, "")
+      .replace(/^en\//i, "");
   }
 
   function formatInline(text) {
@@ -118,7 +192,7 @@
   }
 
   function renderMarkdown(md, options = {}) {
-    const { stripLeadingH1 = true } = options;
+    const { stripLeadingH1 = true, copyLabel = "Copiar" } = options;
     const lines = md.replace(/\r\n/g, "\n").split("\n");
     const html = [];
     let i = 0;
@@ -139,7 +213,7 @@
         i++;
         const langAttr = lang ? ` data-lang="${escapeHtml(lang)}"` : "";
         html.push(
-          `<div class="code-block-wrap"><button type="button" class="code-copy-btn">Copiar</button><pre${langAttr}><code>${escapeHtml(codeLines.join("\n"))}</code></pre></div>`
+          `<div class="code-block-wrap"><button type="button" class="code-copy-btn">${escapeHtml(copyLabel)}</button><pre${langAttr}><code>${escapeHtml(codeLines.join("\n"))}</code></pre></div>`
         );
         continue;
       }
@@ -268,11 +342,13 @@
   const docsState = {
     docs: [],
     activeFile: null,
+    activeIndex: 0,
     mode: "single",
     query: ""
   };
 
   async function discoverMarkdownFiles() {
+    const source = getDocsSource();
     const ordered = [];
     const seen = new Set();
 
@@ -285,7 +361,7 @@
     };
 
     try {
-      const manifestRes = await fetch("docs-manifest.json", { cache: "no-store" });
+      const manifestRes = await fetch(source.manifest, { cache: "no-store" });
       if (manifestRes.ok) {
         const manifest = await manifestRes.json();
         if (Array.isArray(manifest)) manifest.forEach(addFile);
@@ -294,7 +370,7 @@
       // Silencioso: fallback para descoberta via API ou file://
     }
 
-    for (const apiUrl of GITHUB_API_DOCS) {
+    for (const apiUrl of source.apiPaths) {
       try {
         const res = await fetch(apiUrl, { headers: { Accept: "application/vnd.github+json" } });
         if (!res.ok) continue;
@@ -373,9 +449,9 @@
         if (!pre) return;
         try {
           await navigator.clipboard.writeText(pre.innerText);
-          setTempButtonLabel(btn, "Copiado!", "Copiar", 1600);
+          setTempButtonLabel(btn, t("dyn.copied"), t("dyn.copy"), 1600);
         } catch {
-          setTempButtonLabel(btn, "Erro", "Copiar", 1600);
+          setTempButtonLabel(btn, t("dyn.copyError"), t("dyn.copy"), 1600);
         }
       });
     });
@@ -383,10 +459,11 @@
     docsViewer.querySelectorAll("a[data-internal-doc]").forEach((link) => {
       link.addEventListener("click", (e) => {
         const targetFile = link.getAttribute("data-internal-doc");
-        const exists = docsState.docs.some((d) => d.file === targetFile);
-        if (!exists) return;
+        const foundIdx = docsState.docs.findIndex((d) => d.file === targetFile);
+        if (foundIdx === -1) return;
         e.preventDefault();
         docsState.activeFile = targetFile;
+        docsState.activeIndex = foundIdx;
         docsState.mode = "single";
         setDocHash(targetFile);
         renderDocsHub();
@@ -397,18 +474,19 @@
     docsViewer.querySelectorAll("button[data-copy-doc-link]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const fileName = btn.getAttribute("data-copy-doc-link");
-        const url = `${window.location.origin}${window.location.pathname}#doc=${encodeURIComponent(fileName)}`;
+        const url = `${window.location.origin}${window.location.pathname}?lang=${currentLang}#doc=${encodeURIComponent(fileName)}`;
         try {
           await navigator.clipboard.writeText(url);
-          setTempButtonLabel(btn, "Link copiado!", "Copiar link", 1600);
+          setTempButtonLabel(btn, t("dyn.linkCopied"), t("dyn.copyLink"), 1600);
         } catch {
-          setTempButtonLabel(btn, "Copie a URL", "Copiar link", 1600);
+          setTempButtonLabel(btn, t("dyn.copyUrlFallback"), t("dyn.copyLink"), 1600);
         }
       });
     });
   }
 
   function renderDocSectionHtml(doc) {
+    const source = getDocsSource();
     const slug = doc.file.replace(/[^a-zA-Z0-9_-]/g, "-");
     return `
       <article id="section-${escapeHtml(slug)}" class="doc-section-card">
@@ -418,8 +496,8 @@
             <span class="doc-section-filename">${escapeHtml(doc.file)}</span>
           </div>
           <div class="doc-section-actions">
-            <button type="button" class="btn btn-sm" data-copy-doc-link="${escapeHtml(doc.file)}">Copiar link</button>
-            <a class="btn btn-sm" href="${GITHUB_BLOB_BASE}${encodeURIComponent(doc.file)}" target="_blank" rel="noopener noreferrer">Ver no GitHub</a>
+            <button type="button" class="btn btn-sm" data-copy-doc-link="${escapeHtml(doc.file)}">${escapeHtml(t("dyn.copyLink"))}</button>
+            <a class="btn btn-sm" href="${source.blobBase}${encodeURIComponent(doc.file)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t("dyn.viewGitHub"))}</a>
           </div>
         </header>
         <div class="md-body">${doc.html}</div>
@@ -441,18 +519,18 @@
       const total = docsState.docs.length;
       docsCountBadge.textContent =
         filtered.length === total
-          ? `${total} guias .md`
-          : `${filtered.length} de ${total} guias .md`;
+          ? t("dyn.guidesBadge", { count: total })
+          : t("dyn.guidesFilteredBadge", { shown: filtered.length, total });
     }
 
     if (docsState.docs.length === 0) {
-      docsSidebar.innerHTML = '<div class="docs-empty">Nenhum guia carregado localmente.</div>';
+      docsSidebar.innerHTML = `<div class="docs-empty">${escapeHtml(t("dyn.noLocalGuides"))}</div>`;
       return;
     }
 
     if (filtered.length === 0) {
-      docsSidebar.innerHTML = '<div class="docs-empty">Nenhum guia corresponde à busca.</div>';
-      docsViewer.innerHTML = '<div class="docs-empty">Nenhuma seção encontrada para o filtro atual. Limpe a busca para ver todos os guias <code>.md</code>.</div>';
+      docsSidebar.innerHTML = `<div class="docs-empty">${escapeHtml(t("dyn.noSearchMatch"))}</div>`;
+      docsViewer.innerHTML = `<div class="docs-empty">${t("dyn.noSectionMatch")}</div>`;
       return;
     }
 
@@ -476,6 +554,8 @@
       btn.addEventListener("click", () => {
         const fileName = btn.getAttribute("data-select-doc");
         docsState.activeFile = fileName;
+        const idx = docsState.docs.findIndex((d) => d.file === fileName);
+        if (idx >= 0) docsState.activeIndex = idx;
         setDocHash(fileName);
         if (docsState.mode === "all") {
           updateSidebarActiveState(fileName);
@@ -495,49 +575,62 @@
     wireViewerActions();
   }
 
-  async function initDocsHub() {
+  async function initDocsHub({ preserveIndex = false } = {}) {
     if (!docsSidebar || !docsViewer) return;
 
+    const source = getDocsSource();
+
     if (window.location.protocol === "file:") {
-      const fallbackFiles = [
-        "arquitetura-e-motor-hibrido.md",
-        "api-local-servico.md",
-        "seguranca-remotes-e-wizard.md",
-        "provisionamento-e-trava-release.md",
-        "filtros-e-otimizador.md",
-        "operacao-e-servico-windows.md"
-      ];
-      if (docsCountBadge) docsCountBadge.textContent = "Modo arquivo local";
+      const fallbackFiles =
+        currentLang === "en"
+          ? [
+              "architecture-and-hybrid-engine.md",
+              "local-service-api.md",
+              "security-remotes-and-wizard.md",
+              "provisioning-and-release-lock.md",
+              "filters-and-optimizer.md",
+              "operations-and-windows-service.md"
+            ]
+          : [
+              "arquitetura-e-motor-hibrido.md",
+              "api-local-servico.md",
+              "seguranca-remotes-e-wizard.md",
+              "provisionamento-e-trava-release.md",
+              "filtros-e-otimizador.md",
+              "operacao-e-servico-windows.md"
+            ];
+      if (docsCountBadge) docsCountBadge.textContent = t("dyn.localModeBadge");
       docsSidebar.innerHTML = fallbackFiles
         .map(
           (f) =>
-            `<a class="doc-nav-btn" href="${GITHUB_BLOB_BASE}${encodeURIComponent(f)}" target="_blank" rel="noopener noreferrer"><span class="doc-nav-title">${escapeHtml(f)}</span><span class="doc-nav-file">Abrir no GitHub</span></a>`
+            `<a class="doc-nav-btn" href="${source.blobBase}${encodeURIComponent(f)}" target="_blank" rel="noopener noreferrer"><span class="doc-nav-title">${escapeHtml(f)}</span><span class="doc-nav-file">${escapeHtml(t("dyn.openGitHub"))}</span></a>`
         )
         .join("");
       docsViewer.innerHTML = `
         <div class="doc-section-card md-body">
-          <h3>Visualização local via <code>file://</code></h3>
-          <p>Navegadores bloqueiam <code>fetch()</code> de arquivos <code>.md</code> quando a página é aberta diretamente do disco (<code>file://</code>). No GitHub Pages ou em qualquer servidor HTTP local, todos os arquivos <code>docs/*.md</code> são lidos automaticamente como seções.</p>
-          <p>Para testar localmente com todas as seções automáticas, rode na pasta <code>docs/</code>:</p>
+          <h3>${t("dyn.localTitle")}</h3>
+          <p>${t("dyn.localP1")}</p>
+          <p>${t("dyn.localP2")}</p>
           <pre><code>python -m http.server 8080</code></pre>
-          <p>Depois acesse <code>http://localhost:8080</code> ou abra qualquer guia diretamente pelos links na barra lateral.</p>
+          <p>${t("dyn.localP3")}</p>
         </div>
       `;
       return;
     }
 
     const fileNames = await discoverMarkdownFiles();
+    const copyLabel = t("dyn.copy");
     const results = await Promise.all(
       fileNames.map(async (file) => {
         try {
-          const res = await fetch(file, { cache: "no-store" });
+          const res = await fetch(`${source.basePath}${file}`, { cache: "no-store" });
           if (!res.ok) return null;
           const raw = await res.text();
           return {
             file,
             title: extractTitle(raw, file),
             raw,
-            html: renderMarkdown(raw, { stripLeadingH1: true })
+            html: renderMarkdown(raw, { stripLeadingH1: true, copyLabel })
           };
         } catch {
           return null;
@@ -548,22 +641,95 @@
     docsState.docs = results.filter(Boolean);
 
     const hashDoc = getDocHash();
-    if (hashDoc && docsState.docs.some((d) => d.file === hashDoc)) {
+    if (!preserveIndex && hashDoc && docsState.docs.some((d) => d.file === hashDoc)) {
       docsState.activeFile = hashDoc;
+      docsState.activeIndex = docsState.docs.findIndex((d) => d.file === hashDoc);
+    } else if (preserveIndex && docsState.docs.length > 0) {
+      const safeIdx = Math.min(Math.max(docsState.activeIndex, 0), docsState.docs.length - 1);
+      docsState.activeIndex = safeIdx;
+      docsState.activeFile = docsState.docs[safeIdx].file;
+      if (hashDoc) setDocHash(docsState.activeFile);
     } else if (docsState.docs.length > 0) {
+      docsState.activeIndex = 0;
       docsState.activeFile = docsState.docs[0].file;
+    } else {
+      docsState.activeFile = null;
     }
 
     if (docsState.docs.length === 0) {
-      if (docsCountBadge) docsCountBadge.textContent = "0 guias carregados";
-      docsViewer.innerHTML = `<div class="docs-empty">Não foi possível carregar os arquivos <code>.md</code>. Verifique se estão publicados em <code>docs/</code> ou acesse pelo <a href="${GITHUB_BLOB_BASE}" target="_blank" rel="noopener noreferrer">GitHub</a>.</div>`;
+      if (docsCountBadge) docsCountBadge.textContent = t("dyn.zeroGuides");
+      docsViewer.innerHTML = `<div class="docs-empty">${t("dyn.loadError", { folder: source.folderLabel, url: source.blobBase })}</div>`;
     }
 
     renderDocsHub();
 
-    if (hashDoc && docsState.docs.some((d) => d.file === hashDoc)) {
+    if (!preserveIndex && hashDoc && docsState.docs.some((d) => d.file === hashDoc)) {
       scrollToDocOrHub(hashDoc);
     }
+  }
+
+  const langPtBtn = document.getElementById("langPtBtn");
+  const langEnBtn = document.getElementById("langEnBtn");
+
+  function applyLanguage(lang, { persist = false, updateUrl = false, reloadDocs = false } = {}) {
+    currentLang = normalizeLang(lang) || "pt";
+
+    document.documentElement.lang = currentLang === "en" ? "en" : "pt-BR";
+    document.title = t("meta.title");
+
+    const metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) metaDesc.setAttribute("content", t("meta.description"));
+
+    if (langPtBtn && langEnBtn) {
+      langPtBtn.classList.toggle("active", currentLang === "pt");
+      langEnBtn.classList.toggle("active", currentLang === "en");
+    }
+
+    document.querySelectorAll("[data-i18n]").forEach((el) => {
+      el.textContent = t(el.getAttribute("data-i18n"));
+    });
+
+    document.querySelectorAll("[data-i18n-html]").forEach((el) => {
+      el.innerHTML = t(el.getAttribute("data-i18n-html"));
+    });
+
+    document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+      el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
+    });
+
+    document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+      el.setAttribute("aria-label", t(el.getAttribute("data-i18n-aria")));
+    });
+
+    if (persist) {
+      try {
+        localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+      } catch {
+        // Sem armazenamento local
+      }
+    }
+
+    if (updateUrl) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("lang", currentLang);
+      history.replaceState(null, "", `${nextUrl.pathname}${nextUrl.search}${window.location.hash}`);
+    }
+
+    if (reloadDocs) {
+      initDocsHub({ preserveIndex: true });
+    }
+  }
+
+  if (langPtBtn) {
+    langPtBtn.addEventListener("click", () => {
+      if (currentLang !== "pt") applyLanguage("pt", { persist: true, updateUrl: true, reloadDocs: true });
+    });
+  }
+
+  if (langEnBtn) {
+    langEnBtn.addEventListener("click", () => {
+      if (currentLang !== "en") applyLanguage("en", { persist: true, updateUrl: true, reloadDocs: true });
+    });
   }
 
   if (docsSearchInput) {
@@ -589,13 +755,18 @@
 
   window.addEventListener("hashchange", () => {
     const hashDoc = getDocHash();
-    if (hashDoc && docsState.docs.some((d) => d.file === hashDoc)) {
-      docsState.activeFile = hashDoc;
-      docsState.mode = "single";
-      renderDocsHub();
-      scrollToDocOrHub(hashDoc);
+    if (hashDoc) {
+      const foundIdx = docsState.docs.findIndex((d) => d.file === hashDoc);
+      if (foundIdx >= 0) {
+        docsState.activeFile = hashDoc;
+        docsState.activeIndex = foundIdx;
+        docsState.mode = "single";
+        renderDocsHub();
+        scrollToDocOrHub(hashDoc);
+      }
     }
   });
 
-  initDocsHub();
+  applyLanguage(currentLang, { persist: false, updateUrl: false, reloadDocs: false });
+  initDocsHub({ preserveIndex: false });
 })();

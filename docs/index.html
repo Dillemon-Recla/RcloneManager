@@ -21,16 +21,22 @@
         <span class="brand-badge">.NET 10</span>
       </a>
 
-      <button id="navToggle" type="button" class="nav-toggle" aria-label="Abrir menu">☰</button>
-
       <nav id="navLinks" class="nav-links">
-        <a href="#recursos">Recursos</a>
-        <a href="#arquitetura">Arquitetura</a>
-        <a href="#inicio-rapido">Início Rápido</a>
-        <a href="#documentacao">Documentação</a>
-        <a href="#apoiar">Apoiar</a>
+        <a href="#recursos" data-i18n="nav.features">Recursos</a>
+        <a href="#arquitetura" data-i18n="nav.architecture">Arquitetura</a>
+        <a href="#inicio-rapido" data-i18n="nav.quickstart">Início Rápido</a>
+        <a href="#documentacao" data-i18n="nav.docs">Documentação</a>
+        <a href="#apoiar" data-i18n="nav.support">Apoiar</a>
         <a class="btn btn-sm btn-primary" href="https://github.com/Dillemon-Recla/RcloneManager" target="_blank" rel="noopener noreferrer">GitHub</a>
       </nav>
+
+      <div class="nav-actions">
+        <div class="lang-switch" role="group" aria-label="Selecionar idioma" data-i18n-aria="nav.langSwitchAria">
+          <button id="langPtBtn" type="button" class="lang-btn active" data-lang="pt">PT</button>
+          <button id="langEnBtn" type="button" class="lang-btn" data-lang="en">EN</button>
+        </div>
+        <button id="navToggle" type="button" class="nav-toggle" aria-label="Abrir menu" data-i18n-aria="nav.ariaToggle">☰</button>
+      </div>
     </div>
   </header>
 
@@ -40,83 +46,83 @@
       <div class="container hero-grid">
         <div>
           <div class="pill-row">
-            <span class="pill accent">.NET 10 (WPF + ASP.NET Core)</span>
-            <span class="pill green">Zero NuGet Externos</span>
-            <span class="pill">Rclone v1.76.0 (SHA-256)</span>
-            <span class="pill">Licença MIT</span>
+            <span class="pill accent" data-i18n="hero.pill1">.NET 10 (WPF + ASP.NET Core)</span>
+            <span class="pill green" data-i18n="hero.pill2">Zero NuGet Externos</span>
+            <span class="pill" data-i18n="hero.pill3">Rclone v1.76.0 (SHA-256)</span>
+            <span class="pill" data-i18n="hero.pill4">Licença MIT</span>
           </div>
 
-          <h1>Controle o <span>Rclone</span> com Interface Visual e Serviço em 2º Plano</h1>
-          <p class="hero-lead">
+          <h1 data-i18n-html="hero.title">Controle o <span>Rclone</span> com Interface Visual e Serviço em 2º Plano</h1>
+          <p class="hero-lead" data-i18n-html="hero.lead">
             Uma ponte completa entre você e o Rclone no Windows: motor híbrido (<strong>API RC + CLI</strong>),
             agendador automático, gerenciamento visual de <strong>71+ provedores</strong>, cofre
             <strong>AES-256-GCM</strong> no Gerenciador de Credenciais do Windows e provisionamento travado por release.
           </p>
 
           <div class="hero-actions">
-            <a class="btn btn-primary" href="#inicio-rapido">Começar Agora</a>
-            <a class="btn" href="https://github.com/Dillemon-Recla/RcloneManager" target="_blank" rel="noopener noreferrer">Ver Código no GitHub</a>
-            <a class="btn btn-success" href="#apoiar">Apoiar Projeto</a>
+            <a class="btn btn-primary" href="#inicio-rapido" data-i18n="hero.ctaStart">Começar Agora</a>
+            <a class="btn" href="https://github.com/Dillemon-Recla/RcloneManager" target="_blank" rel="noopener noreferrer" data-i18n="hero.ctaRepo">Ver Código no GitHub</a>
+            <a class="btn btn-success" href="#apoiar" data-i18n="hero.ctaSupport">Apoiar Projeto</a>
           </div>
         </div>
 
         <!-- MOCKUP INTERATIVO DA INTERFACE -->
-        <div class="app-window" aria-label="Prévia da interface RcloneManager">
+        <div class="app-window" aria-label="Prévia da interface RcloneManager" data-i18n-aria="mockup.aria">
           <div class="app-titlebar">
             <div class="window-dots"><span></span><span></span><span></span></div>
-            <span>RcloneManager — Controle Híbrido, Interface &amp; Serviço</span>
-            <span style="color:#10b981;font-weight:700;">● Serviço :5580</span>
+            <span data-i18n="mockup.title">RcloneManager — Controle Híbrido, Interface &amp; Serviço</span>
+            <span style="color:#10b981;font-weight:700;" data-i18n="mockup.status">● Serviço :5580</span>
           </div>
 
           <div class="mockup-tabs">
-            <button type="button" class="mockup-tab active" data-pane="pane-dashboard">Dashboard Ao Vivo</button>
-            <button type="button" class="mockup-tab" data-pane="pane-remotes">Remotes (3 Modos)</button>
-            <button type="button" class="mockup-tab" data-pane="pane-wizard">Wizard &amp; Cofre</button>
+            <button type="button" class="mockup-tab active" data-pane="pane-dashboard" data-i18n="mockup.tabDashboard">Dashboard Ao Vivo</button>
+            <button type="button" class="mockup-tab" data-pane="pane-remotes" data-i18n="mockup.tabRemotes">Remotes (3 Modos)</button>
+            <button type="button" class="mockup-tab" data-pane="pane-wizard" data-i18n="mockup.tabWizard">Wizard &amp; Cofre</button>
           </div>
 
           <div class="mockup-body">
             <div id="pane-dashboard" class="mockup-pane active">
               <div class="kpi-grid">
                 <div class="kpi-card">
-                  <div class="kpi-label">ESTRATÉGIA HÍBRIDA ATIVA</div>
-                  <div class="kpi-val cyan">CLI + RC Monitor (:54915)</div>
+                  <div class="kpi-label" data-i18n="mockup.kpiStrategyLabel">ESTRATÉGIA HÍBRIDA ATIVA</div>
+                  <div class="kpi-val cyan" data-i18n="mockup.kpiStrategyVal">CLI + RC Monitor (:54915)</div>
                 </div>
                 <div class="kpi-card">
-                  <div class="kpi-label">RELEASE TRAVADA</div>
-                  <div class="kpi-val green">v1.76.0 [SHA-256 ✓]</div>
+                  <div class="kpi-label" data-i18n="mockup.kpiReleaseLabel">RELEASE TRAVADA</div>
+                  <div class="kpi-val green" data-i18n="mockup.kpiReleaseVal">v1.76.0 [SHA-256 ✓]</div>
                 </div>
                 <div class="kpi-card">
-                  <div class="kpi-label">VELOCIDADE &amp; ETA</div>
-                  <div class="kpi-val">18.4 MB/s · 01m 14s</div>
+                  <div class="kpi-label" data-i18n="mockup.kpiSpeedLabel">VELOCIDADE &amp; ETA</div>
+                  <div class="kpi-val" data-i18n="mockup.kpiSpeedVal">18.4 MB/s · 01m 14s</div>
                 </div>
                 <div class="kpi-card">
-                  <div class="kpi-label">AGENDADOR</div>
-                  <div class="kpi-val">A cada 120 min (Ativo)</div>
+                  <div class="kpi-label" data-i18n="mockup.kpiSchedulerLabel">AGENDADOR</div>
+                  <div class="kpi-val" data-i18n="mockup.kpiSchedulerVal">A cada 120 min (Ativo)</div>
                 </div>
               </div>
               <div class="progress-box">
                 <div style="display:flex;justify-content:space-between;font-size:0.8rem;">
-                  <span>Backup Usuário → gdrive:BackupPC/</span>
+                  <span data-i18n="mockup.progressTitle">Backup Usuário → gdrive:BackupPC/</span>
                   <strong style="color:#38bdf8;">72%</strong>
                 </div>
                 <div class="progress-bar-bg"><div class="progress-bar-fill"></div></div>
-                <div style="font-size:0.76rem;color:#94a3b8;">Telemetria via /core/stats · Limite de banda ajustável ao vivo (/core/bwlimit)</div>
+                <div style="font-size:0.76rem;color:#94a3b8;" data-i18n="mockup.progressSub">Telemetria via /core/stats · Limite de banda ajustável ao vivo (/core/bwlimit)</div>
               </div>
             </div>
 
             <div id="pane-remotes" class="mockup-pane">
               <div class="mini-list">
                 <div class="mini-item">
-                  <strong>1. Via Link (Navegador / OAuth)</strong>
-                  <span>Abre login OAuth automático + orientação para <code>client_id</code> e <code>client_secret</code> próprios no Google Drive.</span>
+                  <strong data-i18n="mockup.rem1Title">1. Via Link (Navegador / OAuth)</strong>
+                  <span data-i18n-html="mockup.rem1Desc">Abre login OAuth automático + orientação para <code>client_id</code> e <code>client_secret</code> próprios no Google Drive.</span>
                 </div>
                 <div class="mini-item">
-                  <strong>2. Via Token JSON Manual</strong>
-                  <span>Validação JSON antes de salvar e atalho para gerar token via <code>rclone authorize</code>.</span>
+                  <strong data-i18n="mockup.rem2Title">2. Via Token JSON Manual</strong>
+                  <span data-i18n-html="mockup.rem2Desc">Validação JSON antes de salvar e atalho para gerar token via <code>rclone authorize</code>.</span>
                 </div>
                 <div class="mini-item">
-                  <strong>3. Via Chave / Credenciais (Key, Senha ou Service Account)</strong>
-                  <span>S3, R2, SFTP, FTP, SMB ou <code>service_account_file</code> com seletor de arquivo <code>.json/.pem</code> sem abrir navegador.</span>
+                  <strong data-i18n="mockup.rem3Title">3. Via Chave / Credenciais (Key, Senha ou Service Account)</strong>
+                  <span data-i18n-html="mockup.rem3Desc">S3, R2, SFTP, FTP, SMB ou <code>service_account_file</code> com seletor de arquivo <code>.json/.pem</code> sem abrir navegador.</span>
                 </div>
               </div>
             </div>
@@ -124,16 +130,16 @@
             <div id="pane-wizard" class="mockup-pane">
               <div class="mini-list">
                 <div class="mini-item">
-                  <strong>Cofre AES-256-GCM (Windows Credential Manager)</strong>
-                  <span>Chave <code>RcloneManager:MasterKey</code> gerada localmente via <code>advapi32.dll</code> e nunca exportada.</span>
+                  <strong data-i18n="mockup.wiz1Title">Cofre AES-256-GCM (Windows Credential Manager)</strong>
+                  <span data-i18n-html="mockup.wiz1Desc">Chave <code>RcloneManager:MasterKey</code> gerada localmente via <code>advapi32.dll</code> e nunca exportada.</span>
                 </div>
                 <div class="mini-item">
-                  <strong>Exportação Portátil Segura</strong>
-                  <span>Exporta tarefas e blueprint dos serviços usados sem tokens, senhas ou chave mestra.</span>
+                  <strong data-i18n="mockup.wiz2Title">Exportação Portátil Segura</strong>
+                  <span data-i18n="mockup.wiz2Desc">Exporta tarefas e blueprint dos serviços usados sem tokens, senhas ou chave mestra.</span>
                 </div>
                 <div class="mini-item">
-                  <strong>Assistente de 4 Etapas (First-Run Wizard)</strong>
-                  <span>Importar Config → Nova Chave → Release Travada → Autenticar Serviços → Revisar Tarefas.</span>
+                  <strong data-i18n="mockup.wiz3Title">Assistente de 4 Etapas (First-Run Wizard)</strong>
+                  <span data-i18n="mockup.wiz3Desc">Importar Config → Nova Chave → Release Travada → Autenticar Serviços → Revisar Tarefas.</span>
                 </div>
               </div>
             </div>
@@ -146,46 +152,46 @@
     <section id="recursos">
       <div class="container">
         <div class="section-header">
-          <div class="section-kicker">Funcionalidades</div>
-          <h2>Tudo o que você precisa para automatizar o Rclone no Windows</h2>
-          <p>Projetado para unir a flexibilidade da linha de comando do Rclone com a praticidade de uma interface desktop e serviço persistente.</p>
+          <div class="section-kicker" data-i18n="features.kicker">Funcionalidades</div>
+          <h2 data-i18n="features.title">Tudo o que você precisa para automatizar o Rclone no Windows</h2>
+          <p data-i18n="features.subtitle">Projetado para unir a flexibilidade da linha de comando do Rclone com a praticidade de uma interface desktop e serviço persistente.</p>
         </div>
 
         <div class="grid-3">
           <article class="card">
             <div class="card-icon">RC</div>
-            <h3>Motor Híbrido (RC API + CLI)</h3>
-            <p>Escolhe caso a caso entre CLI monitorada com <code>--rc</code> (ideal para <code>--filter-from</code> e <code>--fast-list</code>), daemon persistente <code>rclone rcd</code> na porta <code>5572</code> ou fallback CLI.</p>
+            <h3 data-i18n="features.c1Title">Motor Híbrido (RC API + CLI)</h3>
+            <p data-i18n-html="features.c1Desc">Escolhe caso a caso entre CLI monitorada com <code>--rc</code> (ideal para <code>--filter-from</code> e <code>--fast-list</code>), daemon persistente <code>rclone rcd</code> na porta <code>5572</code> ou fallback CLI.</p>
           </article>
 
           <article class="card">
             <div class="card-icon">71+</div>
-            <h3>Remotes Visuais (3 Modos)</h3>
-            <p>Carrega os 71+ backends oficiais do Rclone. Crie, edite, teste conexão e autentique via <strong>Link OAuth</strong>, <strong>Token JSON</strong> ou <strong>Chave / Service Account</strong>.</p>
+            <h3 data-i18n="features.c2Title">Remotes Visuais (3 Modos)</h3>
+            <p data-i18n-html="features.c2Desc">Carrega os 71+ backends oficiais do Rclone. Crie, edite, teste conexão e autentique via <strong>Link OAuth</strong>, <strong>Token JSON</strong> ou <strong>Chave / Service Account</strong>.</p>
           </article>
 
           <article class="card">
             <div class="card-icon">AES</div>
-            <h3>Cofre Windows &amp; Exportação</h3>
-            <p>Gera chave mestra AES-256 no <strong>Gerenciador de Credenciais do Windows</strong>. Exportações geram um blueprint portátil sem credenciais para reautenticação guiada no Wizard.</p>
+            <h3 data-i18n="features.c3Title">Cofre Windows &amp; Exportação</h3>
+            <p data-i18n-html="features.c3Desc">Gera chave mestra AES-256 no <strong>Gerenciador de Credenciais do Windows</strong>. Exportações geram um blueprint portátil sem credenciais para reautenticação guiada no Wizard.</p>
           </article>
 
           <article class="card">
             <div class="card-icon">SHA</div>
-            <h3>Auto-Download &amp; Trava de Release</h3>
-            <p>Baixa automaticamente a release travada (padrão <code>v1.76.0</code>) de fontes oficiais, valida o hash <strong>SHA-256</strong> e impede execução caso haja divergência de versão.</p>
+            <h3 data-i18n="features.c4Title">Auto-Download &amp; Trava de Release</h3>
+            <p data-i18n-html="features.c4Desc">Baixa automaticamente a release travada (padrão <code>v1.76.0</code>) de fontes oficiais, valida o hash <strong>SHA-256</strong> e impede execução caso haja divergência de versão.</p>
           </article>
 
           <article class="card">
             <div class="card-icon">24h</div>
-            <h3>Agendador &amp; Serviço Windows</h3>
-            <p>Agende por intervalo, horário diário, dias da semana ou logon. Roda em 2º plano via <code>--background</code>, Registro <code>Run</code> ou como Windows Service nativo (<code>sc.exe</code>).</p>
+            <h3 data-i18n="features.c5Title">Agendador &amp; Serviço Windows</h3>
+            <p data-i18n-html="features.c5Desc">Agende por intervalo, horário diário, dias da semana ou logon. Roda em 2º plano via <code>--background</code>, Registro <code>Run</code> ou como Windows Service nativo (<code>sc.exe</code>).</p>
           </article>
 
           <article class="card">
             <div class="card-icon">FLT</div>
-            <h3>Otimizador de Filtros</h3>
-            <p>Detecta conflitos entre <code>--exclude-from</code> e <code>--filter-from</code>, corrige precedência <em>first-match-wins</em> e extrai <code>--max-size</code> preservando backup <code>.bak</code>.</p>
+            <h3 data-i18n="features.c6Title">Otimizador de Filtros</h3>
+            <p data-i18n-html="features.c6Desc">Detecta conflitos entre <code>--exclude-from</code> e <code>--filter-from</code>, corrige precedência <em>first-match-wins</em> e extrai <code>--max-size</code> preservando backup <code>.bak</code>.</p>
           </article>
         </div>
       </div>
@@ -195,32 +201,32 @@
     <section id="arquitetura">
       <div class="container">
         <div class="section-header">
-          <div class="section-kicker">Arquitetura</div>
-          <h2>Desacoplado em 3 Projetos (.NET 10 sem NuGet externos)</h2>
-          <p>Mesmo ao fechar ou minimizar a interface WPF para a bandeja do sistema, o serviço de agendamento continua operando normalmente em segundo plano.</p>
+          <div class="section-kicker" data-i18n="arch.kicker">Arquitetura</div>
+          <h2 data-i18n="arch.title">Desacoplado em 3 Projetos (.NET 10 sem NuGet externos)</h2>
+          <p data-i18n="arch.subtitle">Mesmo ao fechar ou minimizar a interface WPF para a bandeja do sistema, o serviço de agendamento continua operando normalmente em segundo plano.</p>
         </div>
 
         <div class="arch-box">
           <div class="arch-flow">
             <div class="arch-node">
               <span class="tag">RcloneManager.UI</span>
-              <h4>Interface WPF + Bandeja</h4>
-              <p>First-Run Wizard, Dashboard ao vivo, Remotes, Editor de Filtros, Reset, Sobre e System Tray (<code>net10.0-windows</code>).</p>
+              <h4 data-i18n="arch.n1Role">Interface WPF + Bandeja</h4>
+              <p data-i18n-html="arch.n1Desc">First-Run Wizard, Dashboard ao vivo, Remotes, Editor de Filtros, Reset, Sobre e System Tray (<code>net10.0-windows</code>).</p>
             </div>
             <div class="arch-node">
               <span class="tag">RcloneManager.Service</span>
-              <h4>Daemon &amp; API (:5580)</h4>
-              <p>ASP.NET Core Kestrel local (<code>127.0.0.1:5580</code>), <code>BackgroundService</code> e dispatcher Windows Service via <code>advapi32.dll</code>.</p>
+              <h4 data-i18n="arch.n2Role">Daemon &amp; API (:5580)</h4>
+              <p data-i18n-html="arch.n2Desc">ASP.NET Core Kestrel local (<code>127.0.0.1:5580</code>), <code>BackgroundService</code> e dispatcher Windows Service via <code>advapi32.dll</code>.</p>
             </div>
             <div class="arch-node">
               <span class="tag">RcloneManager.Core</span>
-              <h4>Motor, Cofre &amp; Scheduler</h4>
-              <p><code>RcloneHybridEngine</code>, <code>JobScheduler</code>, <code>FilterFileHelper</code>, <code>RcloneReleaseManager</code> e <code>WindowsCredentialVault</code>.</p>
+              <h4 data-i18n="arch.n3Role">Motor, Cofre &amp; Scheduler</h4>
+              <p data-i18n-html="arch.n3Desc"><code>RcloneHybridEngine</code>, <code>JobScheduler</code>, <code>FilterFileHelper</code>, <code>RcloneReleaseManager</code> e <code>WindowsCredentialVault</code>.</p>
             </div>
             <div class="arch-node">
               <span class="tag">rclone.exe (v1.76.0)</span>
-              <h4>Execução RC + CLI</h4>
-              <p>Consultas via <code>rclone rcd</code> (:5572) e jobs de sincronização via CLI com porta RC dinâmica para estatísticas em tempo real.</p>
+              <h4 data-i18n="arch.n4Role">Execução RC + CLI</h4>
+              <p data-i18n-html="arch.n4Desc">Consultas via <code>rclone rcd</code> (:5572) e jobs de sincronização via CLI com porta RC dinâmica para estatísticas em tempo real.</p>
             </div>
           </div>
         </div>
@@ -231,18 +237,18 @@
     <section id="inicio-rapido">
       <div class="container">
         <div class="section-header">
-          <div class="section-kicker">Instalação &amp; Uso</div>
-          <h2>Início Rápido</h2>
-          <p>Requer Windows 10/11 e .NET 10 SDK (ou Desktop + ASP.NET Core Runtime). Não precisa baixar o Rclone manualmente antes — o próprio app faz o provisionamento verificado por SHA-256.</p>
+          <div class="section-kicker" data-i18n="qs.kicker">Instalação &amp; Uso</div>
+          <h2 data-i18n="qs.title">Início Rápido</h2>
+          <p data-i18n="qs.subtitle">Requer Windows 10/11 e .NET 10 SDK (ou Desktop + ASP.NET Core Runtime). Não precisa baixar o Rclone manualmente antes — o próprio app faz o provisionamento verificado por SHA-256.</p>
         </div>
 
         <div class="grid-2">
           <div class="code-card">
             <div class="code-header">
-              <span>PowerShell — Clonar, Compilar e Iniciar</span>
-              <button id="copyQuickstartBtn" type="button" class="btn btn-sm">Copiar</button>
+              <span data-i18n="qs.codeHeader">PowerShell — Clonar, Compilar e Iniciar</span>
+              <button id="copyQuickstartBtn" type="button" class="btn btn-sm" data-i18n="qs.copyBtn">Copiar</button>
             </div>
-            <pre id="quickstartCode">git clone https://github.com/Dillemon-Recla/RcloneManager.git
+            <pre id="quickstartCode" data-i18n="qs.codeBlock">git clone https://github.com/Dillemon-Recla/RcloneManager.git
 cd RcloneManager
 
 # Compila os 3 projetos em modo Release (0 pacotes NuGet externos)
@@ -256,29 +262,29 @@ dotnet build RcloneManager.sln -c Release
             <div class="step-row">
               <div class="step-num">1</div>
               <div>
-                <strong>Importar Config (Opcional) &amp; Nova Chave</strong>
-                <p>Gera sua chave AES-256 no Gerenciador de Credenciais do Windows ou importa um blueprint exportado.</p>
+                <strong data-i18n="qs.s1Title">Importar Config (Opcional) &amp; Nova Chave</strong>
+                <p data-i18n="qs.s1Desc">Gera sua chave AES-256 no Gerenciador de Credenciais do Windows ou importa um blueprint exportado.</p>
               </div>
             </div>
             <div class="step-row">
               <div class="step-num">2</div>
               <div>
-                <strong>Release Travada (SHA-256)</strong>
-                <p>Verifica e baixa automaticamente o <code>rclone.exe</code> oficial na versão travada (<code>v1.76.0</code>).</p>
+                <strong data-i18n="qs.s2Title">Release Travada (SHA-256)</strong>
+                <p data-i18n-html="qs.s2Desc">Verifica e baixa automaticamente o <code>rclone.exe</code> oficial na versão travada (<code>v1.76.0</code>).</p>
               </div>
             </div>
             <div class="step-row">
               <div class="step-num">3</div>
               <div>
-                <strong>Autenticar Serviços</strong>
-                <p>Conecta seus remotes via Link OAuth no navegador, Token JSON ou Chave/Credenciais.</p>
+                <strong data-i18n="qs.s3Title">Autenticar Serviços</strong>
+                <p data-i18n="qs.s3Desc">Conecta seus remotes via Link OAuth no navegador, Token JSON ou Chave/Credenciais.</p>
               </div>
             </div>
             <div class="step-row">
               <div class="step-num">4</div>
               <div>
-                <strong>Revisar Tarefas &amp; Agendador</strong>
-                <p>Revise origem, destino, intervalo e ative a inicialização automática com o Windows.</p>
+                <strong data-i18n="qs.s4Title">Revisar Tarefas &amp; Agendador</strong>
+                <p data-i18n="qs.s4Desc">Revise origem, destino, intervalo e ative a inicialização automática com o Windows.</p>
               </div>
             </div>
           </div>
@@ -290,31 +296,31 @@ dotnet build RcloneManager.sln -c Release
     <section id="documentacao">
       <div class="container">
         <div class="section-header">
-          <div class="section-kicker">Guias automáticos em docs/*.md</div>
-          <h2>Documentação Técnica</h2>
-          <p>Todos os arquivos Markdown da pasta <code>docs/</code> são carregados automaticamente e transformados em seções navegáveis aqui mesmo.</p>
+          <div class="section-kicker" data-i18n="docs.kicker">Guias automáticos em docs/*.md</div>
+          <h2 data-i18n="docs.title">Documentação Técnica</h2>
+          <p data-i18n-html="docs.subtitle">Todos os arquivos Markdown da pasta <code>docs/</code> são carregados automaticamente e transformados em seções navegáveis aqui mesmo.</p>
         </div>
 
         <div id="docsHub" class="docs-hub">
           <div class="docs-toolbar">
             <div class="docs-search-wrap">
-              <input id="docsSearchInput" type="search" placeholder="Filtrar documentação por título, comando ou palavra-chave..." aria-label="Filtrar documentação" />
+              <input id="docsSearchInput" type="search" placeholder="Filtrar documentação por título, comando ou palavra-chave..." aria-label="Filtrar documentação" data-i18n-placeholder="docs.searchPlaceholder" data-i18n-aria="docs.searchAria" />
             </div>
             <div class="docs-toolbar-right">
               <span id="docsCountBadge" class="badge">Carregando .md...</span>
-              <div class="docs-mode-switch" role="group" aria-label="Modo de exibição da documentação">
-                <button id="modeSingleBtn" type="button" class="btn btn-sm btn-primary" data-docs-mode="single">Por Documento</button>
-                <button id="modeAllBtn" type="button" class="btn btn-sm" data-docs-mode="all">Todas as Seções</button>
+              <div class="docs-mode-switch" role="group" aria-label="Modo de exibição da documentação" data-i18n-aria="docs.modeAria">
+                <button id="modeSingleBtn" type="button" class="btn btn-sm btn-primary" data-docs-mode="single" data-i18n="docs.modeSingle">Por Documento</button>
+                <button id="modeAllBtn" type="button" class="btn btn-sm" data-docs-mode="all" data-i18n="docs.modeAll">Todas as Seções</button>
               </div>
             </div>
           </div>
 
           <div class="docs-layout">
-            <aside id="docsSidebar" class="docs-sidebar" aria-label="Lista de documentos Markdown">
-              <div class="docs-loading">Descobrindo arquivos .md...</div>
+            <aside id="docsSidebar" class="docs-sidebar" aria-label="Lista de documentos Markdown" data-i18n-aria="docs.sidebarAria">
+              <div class="docs-loading" data-i18n="docs.discovering">Descobrindo arquivos .md...</div>
             </aside>
             <div id="docsViewer" class="docs-viewer">
-              <div class="docs-loading">Carregando documentação...</div>
+              <div class="docs-loading" data-i18n="docs.loading">Carregando documentação...</div>
             </div>
           </div>
         </div>
@@ -325,22 +331,22 @@ dotnet build RcloneManager.sln -c Release
     <section id="apoiar">
       <div class="container">
         <div class="section-header">
-          <div class="section-kicker">Open Source (MIT)</div>
-          <h2>Apoie o Projeto</h2>
-          <p>O RcloneManager é software livre e gratuito. Se ele ajuda no seu fluxo de backups, considere contribuir com código, abrir uma estrela no GitHub ou apoiar financeiramente.</p>
+          <div class="section-kicker" data-i18n="support.kicker">Open Source (MIT)</div>
+          <h2 data-i18n="support.title">Apoie o Projeto</h2>
+          <p data-i18n="support.subtitle">O RcloneManager é software livre e gratuito. Se ele ajuda no seu fluxo de backups, considere contribuir com código, abrir uma estrela no GitHub ou apoiar financeiramente.</p>
         </div>
 
         <div class="grid-2">
           <div class="card">
             <h3>GitHub Sponsors</h3>
-            <p style="margin-bottom:1.1rem;">Apoio internacional ou recorrente diretamente pelo GitHub, sem taxas extras da plataforma para contas pessoais.</p>
-            <a class="btn btn-primary" href="https://github.com/sponsors/Dillemon-Recla" target="_blank" rel="noopener noreferrer">Apoiar via GitHub Sponsors</a>
+            <p style="margin-bottom:1.1rem;" data-i18n="support.sponsorsDesc">Apoio internacional ou recorrente diretamente pelo GitHub, sem taxas extras da plataforma para contas pessoais.</p>
+            <a class="btn btn-primary" href="https://github.com/sponsors/Dillemon-Recla" target="_blank" rel="noopener noreferrer" data-i18n="support.sponsorsBtn">Apoiar via GitHub Sponsors</a>
           </div>
 
           <div class="card">
             <h3>Ko-fi</h3>
-            <p style="margin-bottom:1.1rem;">Apoio avulso ou recorrente em formato "compre um café", prático para contribuições rápidas de qualquer país.</p>
-            <a class="btn btn-primary" href="https://ko-fi.com/dillemonrecla" target="_blank" rel="noopener noreferrer">Apoiar no Ko-fi</a>
+            <p style="margin-bottom:1.1rem;" data-i18n="support.kofiDesc">Apoio avulso ou recorrente em formato "compre um café", prático para contribuições rápidas de qualquer país.</p>
+            <a class="btn btn-primary" href="https://ko-fi.com/dillemonrecla" target="_blank" rel="noopener noreferrer" data-i18n="support.kofiBtn">Apoiar no Ko-fi</a>
           </div>
         </div>
 
@@ -349,11 +355,11 @@ dotnet build RcloneManager.sln -c Release
             <img src="assets/pix-qrcode.png" alt="QR Code Pix para apoiar o RcloneManager" />
           </div>
           <div>
-            <h3>Pix (Brasil — Chave Aleatória)</h3>
-            <p>Aponte a câmera do app do seu banco ou copie a chave abaixo:</p>
+            <h3 data-i18n="support.pixTitle">Pix (Brasil — Chave Aleatória)</h3>
+            <p data-i18n="support.pixDesc">Aponte a câmera do app do seu banco ou copie a chave abaixo:</p>
             <div class="pix-key">95b9aa86-3c99-421d-9c86-6a47a3b09d7b</div>
             <div>
-              <button id="copyPixBtn" type="button" class="btn btn-sm btn-success">Copiar Chave Pix</button>
+              <button id="copyPixBtn" type="button" class="btn btn-sm btn-success" data-i18n="support.pixCopyBtn">Copiar Chave Pix</button>
               <span id="pixFeedback" class="copy-feedback"></span>
             </div>
           </div>
@@ -365,42 +371,41 @@ dotnet build RcloneManager.sln -c Release
     <section id="creditos">
       <div class="container">
         <div class="section-header">
-          <div class="section-kicker">Motor &amp; Tecnologia Base</div>
-          <h2>Créditos aos Criadores do Rclone</h2>
-          <p>Todo o transporte em nuvem, compatibilidade com 71+ provedores, criptografia de remotes e protocolo RC existem graças ao trabalho incrível do projeto original.</p>
+          <div class="section-kicker" data-i18n="credits.kicker">Motor &amp; Tecnologia Base</div>
+          <h2 data-i18n="credits.title">Créditos aos Criadores do Rclone</h2>
+          <p data-i18n="credits.subtitle">Todo o transporte em nuvem, compatibilidade com 71+ provedores, criptografia de remotes e protocolo RC existem graças ao trabalho incrível do projeto original.</p>
         </div>
 
         <div class="card">
-          <h3>Construído sobre o Rclone (Licença MIT)</h3>
-          <p style="margin-bottom:0.85rem;">
+          <h3 data-i18n="credits.cardTitle">Construído sobre o Rclone (Licença MIT)</h3>
+          <p style="margin-bottom:0.85rem;" data-i18n-html="credits.p1">
             O <strong>RcloneManager</strong> é uma interface independente desenvolvida sobre o
             <a href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Rclone</a>, criado por
             <a href="https://github.com/ncw" target="_blank" rel="noopener noreferrer">Nick Craig-Wood</a> e mantido pelos contribuidores da comunidade
             <a href="https://github.com/rclone/rclone" target="_blank" rel="noopener noreferrer">rclone/rclone</a> sob a licença MIT.
           </p>
-          <p style="margin-bottom:1.15rem;color:var(--text-muted);font-size:0.92rem;">
+          <p style="margin-bottom:1.15rem;color:var(--text-muted);font-size:0.92rem;" data-i18n="credits.p2">
             Este projeto não possui afiliação oficial com os mantenedores do Rclone. Os binários oficiais baixados pelo provisionamento automático vêm diretamente das releases oficiais assinadas por SHA-256 do Rclone.
           </p>
           <div style="display:flex;flex-wrap:wrap;gap:0.6rem;">
-            <a class="btn btn-sm btn-primary" href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Site Oficial (rclone.org)</a>
-            <a class="btn btn-sm" href="https://github.com/rclone/rclone" target="_blank" rel="noopener noreferrer">Repositório do Rclone</a>
-            <a class="btn btn-sm" href="https://github.com/ncw" target="_blank" rel="noopener noreferrer">Nick Craig-Wood (Criador)</a>
-            <a class="btn btn-sm btn-success" href="https://rclone.org/donate/" target="_blank" rel="noopener noreferrer">Apoiar o Projeto Rclone</a>
+            <a class="btn btn-sm btn-primary" href="https://rclone.org/" target="_blank" rel="noopener noreferrer" data-i18n="credits.btnSite">Site Oficial (rclone.org)</a>
+            <a class="btn btn-sm" href="https://github.com/rclone/rclone" target="_blank" rel="noopener noreferrer" data-i18n="credits.btnRepo">Repositório do Rclone</a>
+            <a class="btn btn-sm" href="https://github.com/ncw" target="_blank" rel="noopener noreferrer" data-i18n="credits.btnCreator">Nick Craig-Wood (Criador)</a>
+            <a class="btn btn-sm btn-success" href="https://rclone.org/donate/" target="_blank" rel="noopener noreferrer" data-i18n="credits.btnDonate">Apoiar o Projeto Rclone</a>
           </div>
         </div>
       </div>
     </section>
   </main>
 
-
   <!-- FOOTER -->
   <footer>
     <div class="container footer-inner">
-      <div>
+      <div data-i18n-html="footer.copy">
         <strong>RcloneManager</strong> · Licença <a href="https://github.com/Dillemon-Recla/RcloneManager/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT</a> · Baseado no <a href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Rclone</a> (criado por <a href="https://github.com/ncw" target="_blank" rel="noopener noreferrer">Nick Craig-Wood</a> e comunidade) · Copyright © 2026 Dillemon Recla
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:1.1rem;">
-        <a href="https://github.com/Dillemon-Recla/RcloneManager" target="_blank" rel="noopener noreferrer">Repositório</a>
+        <a href="https://github.com/Dillemon-Recla/RcloneManager" target="_blank" rel="noopener noreferrer" data-i18n="footer.repo">Repositório</a>
         <a href="https://github.com/Dillemon-Recla/RcloneManager/issues" target="_blank" rel="noopener noreferrer">Issues</a>
         <a href="https://ko-fi.com/dillemonrecla" target="_blank" rel="noopener noreferrer">Ko-fi</a>
         <a href="https://rclone.org/" target="_blank" rel="noopener noreferrer">Rclone.org</a>
@@ -409,6 +414,7 @@ dotnet build RcloneManager.sln -c Release
     </div>
   </footer>
 
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
