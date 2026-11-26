@@ -1,0 +1,137 @@
+name: Release RcloneManager
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Incremento automatico da versao (usado quando tag manual estiver vazia)'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      tag:
+        description: 'Tag especifica opcional (deixe vazio para numerar automaticamente)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Portable ZIP & Publish GitHub Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Resolve version and tag
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "push") {
+            $tag = "${{ github.ref_name }}".Trim()
+          } elseif (-not [string]::IsNullOrWhiteSpace("${{ inputs.tag }}")) {
+            $tag = "${{ inputs.tag }}".Trim()
+          } else {
+            # Numeracao automatica baseada na ultima tag v*.*.* existente no repositorio
+            $existingTags = git tag -l "v*.*.*"
+            $parsed = @()
+            foreach ($t in $existingTags) {
+              $clean = $t.TrimStart('v', 'V').Split('-')[0]
+              try {
+                $parsed += [PSCustomObject]@{ Raw = $t; Ver = [version]$clean }
+              } catch { }
+            }
+
+            if ($parsed.Count -eq 0) {
+              $tag = "v1.0.0"
+            } else {
+              $latest = ($parsed | Sort-Object Ver -Descending | Select-Object -First 1).Ver
+              $bump = "${{ inputs.bump }}"
+              switch ($bump) {
+                "major" { $next = [version]::new($latest.Major + 1, 0, 0) }
+                "minor" { $next = [version]::new($latest.Major, $latest.Minor + 1, 0) }
+                default { $next = [version]::new($latest.Major, $latest.Minor, [Math]::Max(0, $latest.Build) + 1) }
+              }
+              $tag = "v$($next.Major).$($next.Minor).$($next.Build)"
+            }
+          }
+
+          if (-not $tag.StartsWith("v")) {
+            $tag = "v$tag"
+          }
+
+          $version = $tag.TrimStart('v', 'V').Split('-')[0]
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Publicando tag=$tag (Version=$version)"
+
+      - name: Publish RcloneManager (win-x64 portable)
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.meta.outputs.version }}"
+          $outDir = "${{ runner.temp }}\RcloneManager-win-x64"
+          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+          # Publica o Servico e a Interface na mesma pasta portatil compartilhando o runtime
+          dotnet publish src/RcloneManager.Service/RcloneManager.Service.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:Version=$ver -p:DebugType=None -p:DebugSymbols=false `
+            -o $outDir
+
+          dotnet publish src/RcloneManager.UI/RcloneManager.UI.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:Version=$ver -p:DebugType=None -p:DebugSymbols=false `
+            -o $outDir
+
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $outDir -Force }
+          if (Test-Path "README.md") { Copy-Item "README.md" -Destination $outDir -Force }
+          if (Test-Path "README.en.md") { Copy-Item "README.en.md" -Destination $outDir -Force }
+          if (Test-Path "docs") { Copy-Item "docs" -Destination (Join-Path $outDir "docs") -Recurse -Force }
+
+      - name: Create ZIP package and SHA256SUMS.txt
+        id: pkg
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $outDir = "${{ runner.temp }}\RcloneManager-win-x64"
+          $distDir = "${{ runner.temp }}\dist"
+          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+
+          $zipName = "RcloneManager-$tag-win-x64.zip"
+          $zipPath = Join-Path $distDir $zipName
+          Compress-Archive -Path "$outDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+
+          $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sumsPath = Join-Path $distDir "SHA256SUMS.txt"
+          "$hash  $zipName" | Set-Content -Path $sumsPath -Encoding ASCII
+
+          "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sums_path=$sumsPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Gerado $zipName (SHA-256: $hash)"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: RcloneManager ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.pkg.outputs.zip_path }}
+            ${{ steps.pkg.outputs.sums_path }}
