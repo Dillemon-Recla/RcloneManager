@@ -1,11 +1,14 @@
-using System.ComponentModel;
 using System.Windows;
 using RcloneManager.Core.Engine;
+using RcloneManager.UI.Services;
 
 namespace RcloneManager.UI;
 
-public partial class RcloneSetupWindow : Window
+public partial class RcloneSetupWindow : System.Windows.Controls.UserControl, IOverlayDialog
 {
+    public Action<bool?>? CloseOverlay { get; set; }
+    public bool CanDismissWithEscape => !_isRunning;
+
     private readonly string _rootDir;
     private readonly string _pinnedVersion;
     private CancellationTokenSource? _cts;
@@ -23,6 +26,12 @@ public partial class RcloneSetupWindow : Window
         TargetInfoText.Text = $"Release travada: {_pinnedVersion} ({RcloneReleaseManager.GetWindowsArchToken()}) — verificação SHA-256";
         ReasonText.Text = reason;
         Loaded += async (_, _) => await StartDownloadAsync();
+    }
+
+    public void OnOverlayDismissed()
+    {
+        if (_isRunning && !_completed)
+            _cts?.Cancel();
     }
 
     private async Task StartDownloadAsync()
@@ -53,8 +62,7 @@ public partial class RcloneSetupWindow : Window
 
             DownloadedExecutablePath = exePath;
             _completed = true;
-            DialogResult = true;
-            Close();
+            CloseOverlay?.Invoke(true);
         }
         catch (OperationCanceledException)
         {
@@ -87,15 +95,6 @@ public partial class RcloneSetupWindow : Window
             return;
         }
 
-        DialogResult = false;
-        Close();
-    }
-
-    private void Window_Closing(object? sender, CancelEventArgs e)
-    {
-        if (_isRunning && !_completed)
-        {
-            _cts?.Cancel();
-        }
+        CloseOverlay?.Invoke(false);
     }
 }

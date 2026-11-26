@@ -9,8 +9,8 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using RcloneManager.Core.Engine;
 using RcloneManager.Core.Models;
-using RcloneManager.Core.Security;
 using RcloneManager.Core.Storage;
+using RcloneManager.Core.Updater;
 using RcloneManager.UI.Services;
 using WinForms = System.Windows.Forms;
 using WpfInput = System.Windows.Input;
@@ -54,11 +54,40 @@ public sealed class ProviderListItem
     public override string ToString() => $"{Name} — {Description}";
 }
 
+public sealed record UiOption<T>(T Value, string Label)
+{
+    public override string ToString() => Label;
+
+    public static IReadOnlyList<UiOption<RcloneOperation>> CreateOperationOptions() => new[]
+    {
+        new UiOption<RcloneOperation>(RcloneOperation.Sync, "Sincronizar (deixar destino igual à pasta de origem)"),
+        new UiOption<RcloneOperation>(RcloneOperation.Copy, "Copiar novidades (sem apagar arquivos no destino)"),
+        new UiOption<RcloneOperation>(RcloneOperation.Move, "Mover arquivos (apagar da origem após enviar)"),
+        new UiOption<RcloneOperation>(RcloneOperation.Check, "Apenas verificar arquivos")
+    };
+}
+
 public partial class MainWindow : Window
 {
+    private enum SimpleScheduleMode
+    {
+        ManualOnly,
+        EveryInterval,
+        DailyAtTime,
+        WeeklyDays,
+        OnStartup
+    }
+
+    private sealed record DestTargetOption(bool IsLocal, string RemoteName, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
     private readonly ServiceApiClient _api = new(5580);
     private readonly DispatcherTimer _pollTimer;
+    private readonly DispatcherTimer _updateCheckTimer;
     private readonly TrayIconHelper _trayIcon;
+    private readonly OverlayHost _overlayHost;
 
     private List<SyncJob> _cachedJobs = new();
     private List<string> _cachedRemotes = new();
@@ -71,21 +100,29 @@ public partial class MainWindow : Window
     private bool _initialProvidersLoaded;
     private ServiceStatusDto? _lastStatus;
     private string? _selectedJobId;
+    private string _editingJobId = string.Empty;
+    private bool _isPopulatingJobForm;
     private bool _isClosingForReal;
     private bool _isUpdatingJobsGrid;
     private bool _initialFilterLoaded;
     private bool _initialRemotesLoaded;
     private bool _initialReleaseFieldsLoaded;
+    private bool _isUpdatingCloseBehaviorUi;
+    private bool _isClosePromptOpen;
+    private bool _keepServiceOnClose = true;
+    private bool _relaunchUiAfterUpdate;
+    private bool _updateApplierLaunched;
+    private bool _updateCheckInFlight;
+    private PendingAppUpdateInfo? _stagedUpdate;
     private bool _pollInFlight;
 
     public MainWindow()
     {
         InitializeComponent();
+        _overlayHost = new OverlayHost(OverlayContainer);
 
-        JobOperationCombo.ItemsSource = Enum.GetValues<RcloneOperation>();
-        JobStrategyCombo.ItemsSource = Enum.GetValues<ExecutionStrategy>();
-        JobFilterModeCombo.ItemsSource = Enum.GetValues<FilterRuleMode>();
-        JobScheduleTypeCombo.ItemsSource = Enum.GetValues<ScheduleType>();
+        InitializeJobFormOptions();
+        InitializeCloseBehaviorUi();
 
         _trayIcon = new TrayIconHelper(
             onOpenWindow: () => Dispatcher.Invoke(ShowFromTray),
@@ -97,28 +134,63 @@ public partial class MainWindow : Window
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
         _pollTimer.Tick += async (_, _) => await PollServiceAsync();
 
+        _updateCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(4) };
+        _updateCheckTimer.Tick += async (_, _) => await CheckAppUpdateInBackgroundAsync();
+
         Loaded += MainWindow_Loaded;
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+
+        // Se havia uma atualização já baixada da sessão anterior, aplica agora ao reabrir (caso nenhum backup esteja ativo)
+        if (!AppAutoUpdater.IsDevelopmentBuild(workDir))
+        {
+            var pendingStartup = AppAutoUpdater.TryGetValidPendingUpdate(workDir);
+            if (pendingStartup != null)
+            {
+                var busyWithActiveBackup = false;
+                try
+                {
+                    var st = await _api.GetStatusAsync();
+                    busyWithActiveBackup = st?.ActiveJob != null;
+                }
+                catch
+                {
+                    busyWithActiveBackup = false;
+                }
+
+                if (!busyWithActiveBackup)
+                {
+                    FooterInfoText.Text = $"Aplicando atualização {pendingStartup.VersionTag}...";
+                    if (AppAutoUpdater.LaunchDetachedUpdateApplier(
+                            workDir,
+                            pendingStartup,
+                            relaunchUiAfterUpdate: true,
+                            restartBackgroundServiceIfNotRelaunchingUi: false))
+                    {
+                        _updateApplierLaunched = true;
+                        _isClosingForReal = true;
+                        Close();
+                        return;
+                    }
+                }
+                else
+                {
+                    SetStagedUpdateReady(pendingStartup);
+                }
+            }
+        }
+
         var store = new AppConfigStore(workDir);
         var cfg = store.LoadOrCreateDefault();
-
-        var keyTarget = SensitiveDataProtector.EnsureInitialized(out var keyCreated, cfg.EncryptionKeyTarget);
-        VaultStatusText.Text = keyCreated
-            ? $"Cofre AES-256: Chave gerada ({keyTarget})"
-            : $"Cofre AES-256: Ativo ({keyTarget})";
 
         if (!cfg.FirstRunCompleted)
         {
             FooterInfoText.Text = "Primeira execução detectada — abrindo Assistente Inicial...";
-            var wizard = new FirstRunWizardWindow(workDir)
-            {
-                Owner = this
-            };
-            wizard.ShowDialog();
+            var wizard = new FirstRunWizardWindow(workDir);
+            await _overlayHost.ShowAsync(wizard);
             cfg = store.LoadOrCreateDefault();
         }
 
@@ -133,14 +205,11 @@ public partial class MainWindow : Window
         if (check.NeedsDownload)
         {
             FooterInfoText.Text = check.StatusMessage;
-            var setupWindow = new RcloneSetupWindow(workDir, check.PinnedVersion, check.StatusMessage)
-            {
-                Owner = this
-            };
+            var setupView = new RcloneSetupWindow(workDir, check.PinnedVersion, check.StatusMessage);
 
-            if (setupWindow.ShowDialog() == true && !string.IsNullOrWhiteSpace(setupWindow.DownloadedExecutablePath))
+            if (await _overlayHost.ShowAsync(setupView) == true && !string.IsNullOrWhiteSpace(setupView.DownloadedExecutablePath))
             {
-                cfg.RcloneExecutablePath = setupWindow.DownloadedExecutablePath;
+                cfg.RcloneExecutablePath = setupView.DownloadedExecutablePath;
                 if (string.IsNullOrWhiteSpace(cfg.RcloneConfigPath))
                     cfg.RcloneConfigPath = AppConfigStore.DetectRcloneConfigPath(cfg.RcloneExecutablePath);
                 store.Save(cfg);
@@ -170,6 +239,14 @@ public partial class MainWindow : Window
         }
 
         _pollTimer.Start();
+        _updateCheckTimer.Start();
+        _ = RunDelayedInitialUpdateCheckAsync();
+    }
+
+    private async Task RunDelayedInitialUpdateCheckAsync()
+    {
+        await Task.Delay(3500);
+        await CheckAppUpdateInBackgroundAsync();
     }
 
     private async Task PollServiceAsync()
@@ -227,8 +304,8 @@ public partial class MainWindow : Window
 
             WindowsStartupCheck.IsChecked = status.StartupWithWindowsEnabled;
             VaultStatusText.Text = status.EncryptionKeyActive
-                ? $"Cofre AES-256: Ativo ({status.EncryptionKeyTarget})"
-                : "Cofre AES-256: Chave ausente";
+                ? "Proteção local: Ativa"
+                : "Proteção local: Automática";
             SyncBwComboSelection(status.CurrentBandwidthLimit);
 
             UpdateDashboard(status);
@@ -332,7 +409,7 @@ public partial class MainWindow : Window
         {
             Id = j.Id,
             Name = j.Enabled ? j.Name : $"[Desativada] {j.Name}",
-            StatusText = j.LastStatus.ToString(),
+            StatusText = FormatJobStatus(j.LastStatus),
             NextRunText = j.NextRunAt.HasValue ? j.NextRunAt.Value.ToString("dd/MM HH:mm") : "Manual",
             LastRunText = j.LastRunAt.HasValue ? j.LastRunAt.Value.ToString("dd/MM HH:mm") : "Nunca",
             RawJob = j
@@ -364,6 +441,400 @@ public partial class MainWindow : Window
         }
     }
 
+    private static string FormatJobStatus(JobRunStatus status) => status switch
+    {
+        JobRunStatus.Idle => "Pronta",
+        JobRunStatus.Running => "Executando",
+        JobRunStatus.Success => "Concluída",
+        JobRunStatus.Failed => "Falhou",
+        JobRunStatus.Cancelled => "Cancelada",
+        _ => status.ToString()
+    };
+
+    private void InitializeJobFormOptions()
+    {
+        JobOperationCombo.ItemsSource = UiOption<RcloneOperation>.CreateOperationOptions();
+
+        JobStrategyCombo.ItemsSource = new[]
+        {
+            new UiOption<ExecutionStrategy>(ExecutionStrategy.HybridAuto, "Automático (Recomendado)"),
+            new UiOption<ExecutionStrategy>(ExecutionStrategy.CliWithRcMonitoring, "Monitoramento ao vivo"),
+            new UiOption<ExecutionStrategy>(ExecutionStrategy.RcDaemonApi, "Serviço em segundo plano"),
+            new UiOption<ExecutionStrategy>(ExecutionStrategy.PureCli, "Modo simples")
+        };
+
+        JobFilterModeCombo.ItemsSource = new[]
+        {
+            new UiOption<FilterRuleMode>(FilterRuleMode.AutoDetect, "Detectar automaticamente (Recomendado)"),
+            new UiOption<FilterRuleMode>(FilterRuleMode.FilterFrom, "Regras de inclusão e exclusão"),
+            new UiOption<FilterRuleMode>(FilterRuleMode.ExcludeFrom, "Lista simples de exclusão")
+        };
+
+        JobScheduleModeCombo.ItemsSource = new[]
+        {
+            new UiOption<SimpleScheduleMode>(SimpleScheduleMode.EveryInterval, "Automaticamente a cada intervalo de tempo"),
+            new UiOption<SimpleScheduleMode>(SimpleScheduleMode.DailyAtTime, "Todos os dias em um horário fixo"),
+            new UiOption<SimpleScheduleMode>(SimpleScheduleMode.WeeklyDays, "Em dias específicos da semana"),
+            new UiOption<SimpleScheduleMode>(SimpleScheduleMode.OnStartup, "Ao ligar o computador / iniciar serviço"),
+            new UiOption<SimpleScheduleMode>(SimpleScheduleMode.ManualOnly, "Somente manual (quando eu clicar em Executar)")
+        };
+
+        JobIntervalPresetCombo.ItemsSource = new[]
+        {
+            new UiOption<int>(15, "15 minutos"),
+            new UiOption<int>(30, "30 minutos"),
+            new UiOption<int>(60, "1 hora"),
+            new UiOption<int>(120, "2 horas"),
+            new UiOption<int>(240, "4 horas"),
+            new UiOption<int>(360, "6 horas"),
+            new UiOption<int>(720, "12 horas"),
+            new UiOption<int>(-1, "Outro intervalo personalizado...")
+        };
+
+        JobMaxSizePresetCombo.ItemsSource = new[]
+        {
+            new UiOption<string>(string.Empty, "Sem limite (enviar todos os tamanhos)"),
+            new UiOption<string>("10M", "Até 10 MB"),
+            new UiOption<string>("50M", "Até 50 MB"),
+            new UiOption<string>("100M", "Até 100 MB"),
+            new UiOption<string>("500M", "Até 500 MB"),
+            new UiOption<string>("1G", "Até 1 GB"),
+            new UiOption<string>("5G", "Até 5 GB"),
+            new UiOption<string>("*", "Outro valor personalizado...")
+        };
+
+        JobBwPresetCombo.ItemsSource = new[]
+        {
+            new UiOption<string>(string.Empty, "Sem limite (velocidade total)"),
+            new UiOption<string>("1M", "1 MB/s"),
+            new UiOption<string>("2M", "2 MB/s"),
+            new UiOption<string>("5M", "5 MB/s"),
+            new UiOption<string>("10M", "10 MB/s"),
+            new UiOption<string>("20M", "20 MB/s"),
+            new UiOption<string>("50M", "50 MB/s"),
+            new UiOption<string>("*", "Outro valor personalizado...")
+        };
+
+        PopulateDestTargetCombo();
+        SelectOption(JobOperationCombo, RcloneOperation.Sync);
+        SelectOption(JobStrategyCombo, ExecutionStrategy.HybridAuto);
+        SelectOption(JobFilterModeCombo, FilterRuleMode.AutoDetect);
+        SelectOption(JobScheduleModeCombo, SimpleScheduleMode.EveryInterval);
+        SelectOption(JobIntervalPresetCombo, 60);
+        SelectOption(JobMaxSizePresetCombo, string.Empty);
+        SelectOption(JobBwPresetCombo, string.Empty);
+        UpdateSchedulePanelsVisibility();
+        UpdateOperationHint();
+    }
+
+    private static void SelectOption<T>(System.Windows.Controls.ComboBox combo, T value)
+    {
+        if (combo.ItemsSource is not IEnumerable<UiOption<T>> items)
+            return;
+
+        var match = items.FirstOrDefault(i => EqualityComparer<T>.Default.Equals(i.Value, value));
+        if (match != null)
+            combo.SelectedItem = match;
+    }
+
+    private static T GetSelectedOption<T>(System.Windows.Controls.ComboBox combo, T fallback)
+    {
+        return combo.SelectedItem is UiOption<T> opt ? opt.Value : fallback;
+    }
+
+    private void PopulateDestTargetCombo(string? ensureRemoteName = null)
+    {
+        var remoteNames = new List<string>();
+        foreach (var raw in _cachedRemotes)
+        {
+            var clean = raw.Trim().TrimEnd(':');
+            if (!string.IsNullOrWhiteSpace(clean) && !remoteNames.Contains(clean, StringComparer.OrdinalIgnoreCase))
+                remoteNames.Add(clean);
+        }
+
+        if (!string.IsNullOrWhiteSpace(ensureRemoteName))
+        {
+            var cleanEnsure = ensureRemoteName.Trim().TrimEnd(':');
+            if (!string.IsNullOrWhiteSpace(cleanEnsure) && !remoteNames.Contains(cleanEnsure, StringComparer.OrdinalIgnoreCase))
+                remoteNames.Add(cleanEnsure);
+        }
+
+        var options = remoteNames
+            .Select(r => new DestTargetOption(false, r, $"☁ Nuvem: {r}"))
+            .ToList();
+        options.Add(new DestTargetOption(true, string.Empty, "📁 Pasta neste computador / Rede"));
+
+        var previous = JobDestTargetCombo.SelectedItem as DestTargetOption;
+        JobDestTargetCombo.ItemsSource = options;
+
+        if (previous != null)
+        {
+            var match = previous.IsLocal
+                ? options.FirstOrDefault(o => o.IsLocal)
+                : options.FirstOrDefault(o => !o.IsLocal && o.RemoteName.Equals(previous.RemoteName, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                JobDestTargetCombo.SelectedItem = match;
+                return;
+            }
+        }
+
+        JobDestTargetCombo.SelectedIndex = 0;
+    }
+
+    private static bool TrySplitRemoteDestination(string path, out string remoteName, out string subpath)
+    {
+        remoteName = string.Empty;
+        subpath = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        var trimmed = path.Trim();
+        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal) ||
+            trimmed.StartsWith("/", StringComparison.Ordinal) ||
+            trimmed.StartsWith(".", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Letra de unidade local do Windows (ex: C:\ ou D:/)
+        if (trimmed.Length >= 2 &&
+            char.IsAsciiLetter(trimmed[0]) &&
+            trimmed[1] == ':' &&
+            (trimmed.Length == 2 || trimmed[2] == '\\' || trimmed[2] == '/'))
+        {
+            return false;
+        }
+
+        var colonIdx = trimmed.IndexOf(':');
+        if (colonIdx <= 0)
+            return false;
+
+        remoteName = trimmed[..colonIdx].Trim();
+        subpath = trimmed[(colonIdx + 1)..];
+        return !string.IsNullOrWhiteSpace(remoteName);
+    }
+
+    private void SetDestinationUi(string destinationPath)
+    {
+        if (TrySplitRemoteDestination(destinationPath, out var remoteName, out var subpath))
+        {
+            PopulateDestTargetCombo(remoteName);
+            if (JobDestTargetCombo.ItemsSource is IEnumerable<DestTargetOption> opts)
+            {
+                JobDestTargetCombo.SelectedItem = opts.FirstOrDefault(
+                    o => !o.IsLocal && o.RemoteName.Equals(remoteName, StringComparison.OrdinalIgnoreCase));
+            }
+            JobDestBox.Text = subpath;
+        }
+        else if (string.IsNullOrWhiteSpace(destinationPath) && _cachedRemotes.Count > 0)
+        {
+            var firstRemote = _cachedRemotes[0].Trim().TrimEnd(':');
+            PopulateDestTargetCombo(firstRemote);
+            if (JobDestTargetCombo.ItemsSource is IEnumerable<DestTargetOption> opts)
+            {
+                JobDestTargetCombo.SelectedItem = opts.FirstOrDefault(
+                    o => !o.IsLocal && o.RemoteName.Equals(firstRemote, StringComparison.OrdinalIgnoreCase));
+            }
+            JobDestBox.Text = string.Empty;
+        }
+        else
+        {
+            PopulateDestTargetCombo();
+            if (JobDestTargetCombo.ItemsSource is IEnumerable<DestTargetOption> opts)
+            {
+                JobDestTargetCombo.SelectedItem = opts.FirstOrDefault(o => o.IsLocal);
+            }
+            JobDestBox.Text = destinationPath;
+        }
+
+        UpdateDestinationControlsState();
+    }
+
+    private string BuildDestinationFromUi()
+    {
+        var text = JobDestBox.Text.Trim();
+        if (JobDestTargetCombo.SelectedItem is DestTargetOption { IsLocal: false } cloudTarget)
+        {
+            var prefix = cloudTarget.RemoteName + ":";
+            if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                text = text[prefix.Length..];
+            text = text.TrimStart(':');
+            return string.IsNullOrEmpty(text) ? prefix : $"{prefix}{text}";
+        }
+
+        return text;
+    }
+
+    private void UpdateDestinationControlsState()
+    {
+        if (!IsLoaded && JobDestSubfolderLabel == null)
+            return;
+
+        var isLocal = (JobDestTargetCombo.SelectedItem as DestTargetOption)?.IsLocal == true;
+        JobDestSubfolderLabel.Text = isLocal
+            ? "Caminho da pasta de destino"
+            : "Pasta dentro da nuvem (ex: BackupPC)";
+        BrowseDestFolderButton.Visibility = isLocal ? Visibility.Visible : Visibility.Collapsed;
+
+        var finalDest = BuildDestinationFromUi();
+        JobDestPreviewText.Text = string.IsNullOrWhiteSpace(finalDest)
+            ? string.Empty
+            : $"Destino configurado: {finalDest}";
+    }
+
+    private void JobOperationCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateOperationHint();
+    }
+
+    private void UpdateOperationHint()
+    {
+        if (JobOperationHintText == null)
+            return;
+
+        var op = GetSelectedOption(JobOperationCombo, RcloneOperation.Sync);
+        JobOperationHintText.Text = op switch
+        {
+            RcloneOperation.Sync => "Mantém o destino igual à pasta de origem (arquivos apagados no PC também saem do destino).",
+            RcloneOperation.Copy => "Seguro para acumular backups: envia arquivos novos/alterados sem apagar nada no destino.",
+            RcloneOperation.Move => "Envia os arquivos para o destino e apaga os originais da pasta do computador após concluir.",
+            RcloneOperation.Check => "Apenas compara se os arquivos de origem e destino estão idênticos, sem alterar nada.",
+            _ => string.Empty
+        };
+    }
+
+    private void JobDestTargetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isPopulatingJobForm)
+            return;
+        UpdateDestinationControlsState();
+    }
+
+    private void JobDestBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isPopulatingJobForm)
+            return;
+        UpdateDestinationControlsState();
+    }
+
+    private void BrowseDestFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new WinForms.FolderBrowserDialog
+        {
+            Description = "Selecione a pasta de destino para salvar os arquivos",
+            UseDescriptionForTitle = true,
+            SelectedPath = Directory.Exists(JobDestBox.Text) ? JobDestBox.Text : string.Empty
+        };
+
+        if (dialog.ShowDialog() == WinForms.DialogResult.OK)
+            JobDestBox.Text = dialog.SelectedPath;
+    }
+
+    private void JobScheduleModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateSchedulePanelsVisibility();
+    }
+
+    private void JobIntervalPresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CustomIntervalPanel == null)
+            return;
+
+        var preset = GetSelectedOption(JobIntervalPresetCombo, 60);
+        if (preset > 0)
+        {
+            CustomIntervalPanel.Visibility = Visibility.Collapsed;
+            if (!_isPopulatingJobForm)
+                JobIntervalBox.Text = preset.ToString(CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            CustomIntervalPanel.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void UpdateSchedulePanelsVisibility()
+    {
+        if (ScheduleIntervalPanel == null)
+            return;
+
+        var mode = GetSelectedOption(JobScheduleModeCombo, SimpleScheduleMode.EveryInterval);
+        ScheduleIntervalPanel.Visibility = mode == SimpleScheduleMode.EveryInterval ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleTimePanel.Visibility = mode is SimpleScheduleMode.DailyAtTime or SimpleScheduleMode.WeeklyDays
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ScheduleDaysPanel.Visibility = mode == SimpleScheduleMode.WeeklyDays ? Visibility.Visible : Visibility.Collapsed;
+        JobRetryCheck.Visibility = mode == SimpleScheduleMode.ManualOnly ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void JobMaxSizePresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (JobMaxSizeBox == null)
+            return;
+
+        var val = GetSelectedOption(JobMaxSizePresetCombo, string.Empty);
+        if (val == "*")
+        {
+            JobMaxSizeBox.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            JobMaxSizeBox.Visibility = Visibility.Collapsed;
+            if (!_isPopulatingJobForm)
+                JobMaxSizeBox.Text = val;
+        }
+    }
+
+    private void JobBwPresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (JobBwLimitBox == null)
+            return;
+
+        var val = GetSelectedOption(JobBwPresetCombo, string.Empty);
+        if (val == "*")
+        {
+            JobBwLimitBox.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            JobBwLimitBox.Visibility = Visibility.Collapsed;
+            if (!_isPopulatingJobForm)
+                JobBwLimitBox.Text = val;
+        }
+    }
+
+    private static void SetPresetStringCombo(System.Windows.Controls.ComboBox combo, System.Windows.Controls.TextBox customBox, string rawValue)
+    {
+        var trimmed = rawValue?.Trim() ?? string.Empty;
+        customBox.Text = trimmed;
+
+        if (combo.ItemsSource is IEnumerable<UiOption<string>> opts)
+        {
+            var exact = opts.FirstOrDefault(o => o.Value != "*" && string.Equals(o.Value, trimmed, StringComparison.OrdinalIgnoreCase));
+            if (exact != null)
+            {
+                combo.SelectedItem = exact;
+                customBox.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            combo.SelectedItem = opts.FirstOrDefault(o => o.Value == "*");
+            customBox.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void OpenFilterInEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        var filterPath = JobFilterPathBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(filterPath))
+            FilterFilePathBox.Text = filterPath;
+
+        MainTabs.SelectedItem = FiltersTab;
+        _ = LoadFilterAnalysisAsync();
+    }
+
     private void JobsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isUpdatingJobsGrid)
@@ -380,42 +851,81 @@ public partial class MainWindow : Window
 
     private void PopulateJobForm(SyncJob job)
     {
-        _selectedJobId = job.Id;
-        JobIdBox.Text = job.Id;
-        JobNameBox.Text = job.Name;
-        JobEnabledCheck.IsChecked = job.Enabled;
-        JobOperationCombo.SelectedItem = job.Operation;
-        JobStrategyCombo.SelectedItem = job.Strategy;
-        JobSourceBox.Text = job.SourcePath;
-        JobDestBox.Text = job.DestinationPath;
-        JobFilterPathBox.Text = job.FilterFilePath;
-        JobFilterModeCombo.SelectedItem = job.FilterMode;
-        JobMaxSizeBox.Text = job.MaxSize;
-        JobBwLimitBox.Text = job.BandwidthLimit;
-        JobLogFileBox.Text = job.LogFilePath;
-        JobExtraFlagsBox.Text = job.ExtraFlags;
-        JobSkipLinksCheck.IsChecked = job.SkipLinks;
-        JobFastListCheck.IsChecked = job.FastList;
-        JobCopyLinksCheck.IsChecked = job.CopyLinks;
-        JobDryRunCheck.IsChecked = job.DryRun;
+        _isPopulatingJobForm = true;
+        try
+        {
+            _selectedJobId = job.Id;
+            _editingJobId = job.Id;
+            JobNameBox.Text = job.Name;
+            JobEnabledCheck.IsChecked = job.Enabled;
 
-        JobScheduledCheck.IsChecked = job.Schedule.IsScheduled;
-        JobScheduleTypeCombo.SelectedItem = job.Schedule.ScheduleType;
-        JobIntervalBox.Text = job.Schedule.IntervalMinutes.ToString(CultureInfo.InvariantCulture);
-        JobDailyTimeBox.Text = job.Schedule.DailyTime;
+            SelectOption(JobOperationCombo, job.Operation);
+            SelectOption(JobStrategyCombo, job.Strategy);
+            SelectOption(JobFilterModeCombo, job.FilterMode);
 
-        var days = job.Schedule.DaysOfWeek ?? new List<DayOfWeek>();
-        DayMonCheck.IsChecked = days.Contains(DayOfWeek.Monday);
-        DayTueCheck.IsChecked = days.Contains(DayOfWeek.Tuesday);
-        DayWedCheck.IsChecked = days.Contains(DayOfWeek.Wednesday);
-        DayThuCheck.IsChecked = days.Contains(DayOfWeek.Thursday);
-        DayFriCheck.IsChecked = days.Contains(DayOfWeek.Friday);
-        DaySatCheck.IsChecked = days.Contains(DayOfWeek.Saturday);
-        DaySunCheck.IsChecked = days.Contains(DayOfWeek.Sunday);
+            JobSourceBox.Text = job.SourcePath;
+            SetDestinationUi(job.DestinationPath);
 
-        JobRetryCheck.IsChecked = job.Schedule.RetryOnFailure;
-        JobMaxRetriesBox.Text = job.Schedule.MaxRetries.ToString(CultureInfo.InvariantCulture);
-        JobRetryDelayBox.Text = job.Schedule.RetryDelayMinutes.ToString(CultureInfo.InvariantCulture);
+            JobFilterPathBox.Text = job.FilterFilePath;
+            SetPresetStringCombo(JobMaxSizePresetCombo, JobMaxSizeBox, job.MaxSize);
+            SetPresetStringCombo(JobBwPresetCombo, JobBwLimitBox, job.BandwidthLimit);
+
+            JobLogFileBox.Text = job.LogFilePath;
+            JobExtraFlagsBox.Text = job.ExtraFlags;
+            JobSkipLinksCheck.IsChecked = job.SkipLinks;
+            JobFastListCheck.IsChecked = job.FastList;
+            JobCopyLinksCheck.IsChecked = job.CopyLinks;
+            JobDryRunCheck.IsChecked = job.DryRun;
+
+            var intervalMins = job.Schedule.IntervalMinutes > 0 ? job.Schedule.IntervalMinutes : 60;
+            JobIntervalBox.Text = intervalMins.ToString(CultureInfo.InvariantCulture);
+            if (JobIntervalPresetCombo.ItemsSource is IEnumerable<UiOption<int>> intervalOpts)
+            {
+                var exactPreset = intervalOpts.FirstOrDefault(o => o.Value == intervalMins);
+                if (exactPreset != null)
+                {
+                    JobIntervalPresetCombo.SelectedItem = exactPreset;
+                    CustomIntervalPanel.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    JobIntervalPresetCombo.SelectedItem = intervalOpts.FirstOrDefault(o => o.Value == -1);
+                    CustomIntervalPanel.Visibility = Visibility.Visible;
+                }
+            }
+
+            var mode = !job.Schedule.IsScheduled
+                ? SimpleScheduleMode.ManualOnly
+                : job.Schedule.ScheduleType switch
+                {
+                    ScheduleType.DailyAtTime => SimpleScheduleMode.DailyAtTime,
+                    ScheduleType.WeeklyDays => SimpleScheduleMode.WeeklyDays,
+                    ScheduleType.OnServiceStart => SimpleScheduleMode.OnStartup,
+                    _ => SimpleScheduleMode.EveryInterval
+                };
+            SelectOption(JobScheduleModeCombo, mode);
+            UpdateSchedulePanelsVisibility();
+
+            JobDailyTimeBox.Text = job.Schedule.DailyTime;
+
+            var days = job.Schedule.DaysOfWeek ?? new List<DayOfWeek>();
+            DayMonCheck.IsChecked = days.Contains(DayOfWeek.Monday);
+            DayTueCheck.IsChecked = days.Contains(DayOfWeek.Tuesday);
+            DayWedCheck.IsChecked = days.Contains(DayOfWeek.Wednesday);
+            DayThuCheck.IsChecked = days.Contains(DayOfWeek.Thursday);
+            DayFriCheck.IsChecked = days.Contains(DayOfWeek.Friday);
+            DaySatCheck.IsChecked = days.Contains(DayOfWeek.Saturday);
+            DaySunCheck.IsChecked = days.Contains(DayOfWeek.Sunday);
+
+            JobRetryCheck.IsChecked = job.Schedule.RetryOnFailure;
+            JobMaxRetriesBox.Text = job.Schedule.MaxRetries.ToString(CultureInfo.InvariantCulture);
+            JobRetryDelayBox.Text = job.Schedule.RetryDelayMinutes.ToString(CultureInfo.InvariantCulture);
+            UpdateOperationHint();
+        }
+        finally
+        {
+            _isPopulatingJobForm = false;
+        }
     }
 
     private SyncJob ReadJobFromForm()
@@ -429,24 +939,44 @@ public partial class MainWindow : Window
         if (DaySatCheck.IsChecked == true) days.Add(DayOfWeek.Saturday);
         if (DaySunCheck.IsChecked == true) days.Add(DayOfWeek.Sunday);
 
-        var interval = int.TryParse(JobIntervalBox.Text.Trim(), out var iv) && iv > 0 ? iv : 60;
+        var presetInterval = GetSelectedOption(JobIntervalPresetCombo, 60);
+        var interval = presetInterval > 0
+            ? presetInterval
+            : (int.TryParse(JobIntervalBox.Text.Trim(), out var iv) && iv > 0 ? iv : 60);
+
         var maxRetries = int.TryParse(JobMaxRetriesBox.Text.Trim(), out var mr) && mr >= 0 ? mr : 3;
         var retryDelay = int.TryParse(JobRetryDelayBox.Text.Trim(), out var rd) && rd > 0 ? rd : 5;
 
+        var scheduleMode = GetSelectedOption(JobScheduleModeCombo, SimpleScheduleMode.EveryInterval);
+        var isScheduled = scheduleMode != SimpleScheduleMode.ManualOnly;
+        var scheduleType = scheduleMode switch
+        {
+            SimpleScheduleMode.DailyAtTime => ScheduleType.DailyAtTime,
+            SimpleScheduleMode.WeeklyDays => ScheduleType.WeeklyDays,
+            SimpleScheduleMode.OnStartup => ScheduleType.OnServiceStart,
+            _ => ScheduleType.IntervalMinutes
+        };
+
+        var maxSizePreset = GetSelectedOption(JobMaxSizePresetCombo, string.Empty);
+        var maxSize = maxSizePreset == "*" ? JobMaxSizeBox.Text.Trim() : maxSizePreset;
+
+        var bwPreset = GetSelectedOption(JobBwPresetCombo, string.Empty);
+        var bwLimit = bwPreset == "*" ? JobBwLimitBox.Text.Trim() : bwPreset;
+
         return new SyncJob
         {
-            Id = string.IsNullOrWhiteSpace(JobIdBox.Text) ? Guid.NewGuid().ToString("N")[..8] : JobIdBox.Text.Trim(),
+            Id = string.IsNullOrWhiteSpace(_editingJobId) ? Guid.NewGuid().ToString("N")[..8] : _editingJobId.Trim(),
             Name = string.IsNullOrWhiteSpace(JobNameBox.Text) ? "Tarefa Sem Nome" : JobNameBox.Text.Trim(),
             Enabled = JobEnabledCheck.IsChecked == true,
-            Operation = JobOperationCombo.SelectedItem is RcloneOperation op ? op : RcloneOperation.Sync,
-            Strategy = JobStrategyCombo.SelectedItem is ExecutionStrategy st ? st : ExecutionStrategy.HybridAuto,
+            Operation = GetSelectedOption(JobOperationCombo, RcloneOperation.Sync),
+            Strategy = GetSelectedOption(JobStrategyCombo, ExecutionStrategy.HybridAuto),
             SourcePath = JobSourceBox.Text.Trim(),
-            DestinationPath = JobDestBox.Text.Trim(),
+            DestinationPath = BuildDestinationFromUi(),
             FilterFilePath = JobFilterPathBox.Text.Trim(),
-            FilterMode = JobFilterModeCombo.SelectedItem is FilterRuleMode fm ? fm : FilterRuleMode.AutoDetect,
-            MaxSize = JobMaxSizeBox.Text.Trim(),
-            BandwidthLimit = JobBwLimitBox.Text.Trim(),
-            LogFilePath = JobLogFileBox.Text.Trim(),
+            FilterMode = GetSelectedOption(JobFilterModeCombo, FilterRuleMode.AutoDetect),
+            MaxSize = maxSize,
+            BandwidthLimit = bwLimit,
+            LogFilePath = string.IsNullOrWhiteSpace(JobLogFileBox.Text) ? "rclone_backup.log" : JobLogFileBox.Text.Trim(),
             ExtraFlags = JobExtraFlagsBox.Text.Trim(),
             SkipLinks = JobSkipLinksCheck.IsChecked == true,
             FastList = JobFastListCheck.IsChecked == true,
@@ -454,8 +984,8 @@ public partial class MainWindow : Window
             DryRun = JobDryRunCheck.IsChecked == true,
             Schedule = new JobSchedule
             {
-                IsScheduled = JobScheduledCheck.IsChecked == true,
-                ScheduleType = JobScheduleTypeCombo.SelectedItem is ScheduleType sch ? sch : ScheduleType.IntervalMinutes,
+                IsScheduled = isScheduled,
+                ScheduleType = scheduleType,
                 IntervalMinutes = interval,
                 DailyTime = string.IsNullOrWhiteSpace(JobDailyTimeBox.Text) ? "14:00" : JobDailyTimeBox.Text.Trim(),
                 DaysOfWeek = days,
@@ -468,17 +998,23 @@ public partial class MainWindow : Window
 
     private void NewJobButton_Click(object sender, RoutedEventArgs e)
     {
+        var firstRemote = _cachedRemotes.FirstOrDefault()?.Trim().TrimEnd(':');
+        var defaultDest = !string.IsNullOrWhiteSpace(firstRemote)
+            ? $"{firstRemote}:BackupDocumentos/"
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Backups");
+
         var fresh = new SyncJob
         {
             Id = Guid.NewGuid().ToString("N")[..8],
-            Name = "Nova Tarefa de Sincronização",
+            Name = "Backup de Documentos",
             SourcePath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            DestinationPath = _cachedRemotes.FirstOrDefault() ?? "gdrive:BackupDocs/",
+            DestinationPath = defaultDest,
             LogFilePath = "rclone_backup.log"
         };
         JobsGrid.SelectedItem = null;
         PopulateJobForm(fresh);
-        FooterInfoText.Text = "Preencha os dados e clique em 'Salvar Tarefa e Recalcular Agendamento'.";
+        _selectedJobId = null;
+        FooterInfoText.Text = "Escolha as pastas e clique em 'Salvar Tarefa'.";
     }
 
     private async void SaveJobButton_Click(object sender, RoutedEventArgs e)
@@ -490,14 +1026,14 @@ public partial class MainWindow : Window
             if (saved != null)
             {
                 _selectedJobId = saved.Id;
-                JobIdBox.Text = saved.Id;
+                _editingJobId = saved.Id;
                 FooterInfoText.Text = $"Tarefa '{saved.Name}' salva! Próxima execução: {(saved.NextRunAt.HasValue ? saved.NextRunAt.Value.ToString("dd/MM/yyyy HH:mm") : "Manual")}.";
                 await PollServiceAsync();
             }
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao salvar tarefa: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao salvar tarefa", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -515,7 +1051,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao iniciar tarefa: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao iniciar tarefa", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -527,13 +1063,13 @@ public partial class MainWindow : Window
         try
         {
             await _api.RunJobAsync(_selectedJobId, dryRun: true);
-            FooterInfoText.Text = $"Simulação (Dry-Run) iniciada para '{JobNameBox.Text}'. Nenhum arquivo será alterado.";
+            FooterInfoText.Text = $"Simulação iniciada para '{JobNameBox.Text}'. Nenhum arquivo será alterado.";
             MainTabs.SelectedItem = DashboardTab;
             await PollServiceAsync();
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao simular tarefa: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao simular tarefa", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -558,13 +1094,14 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_selectedJobId))
             return;
 
-        var confirm = System.Windows.MessageBox.Show(
+        var confirm = await _overlayHost.ShowConfirmAsync(
+            "Excluir Tarefa",
             $"Deseja excluir a tarefa '{JobNameBox.Text}'?",
-            "Confirmar Exclusão",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+            confirmText: "Excluir",
+            cancelText: "Cancelar",
+            isDanger: true);
 
-        if (confirm != MessageBoxResult.Yes)
+        if (!confirm)
             return;
 
         try
@@ -576,7 +1113,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao excluir tarefa: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao excluir tarefa", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -585,7 +1122,7 @@ public partial class MainWindow : Window
         var primary = _cachedJobs.FirstOrDefault(j => j.Enabled) ?? _cachedJobs.FirstOrDefault();
         if (primary == null)
         {
-            System.Windows.MessageBox.Show("Nenhuma tarefa configurada ainda.", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Information);
+            await _overlayHost.ShowAlertAsync("Nenhuma tarefa configurada", "Crie uma tarefa na aba 'Tarefas & Agendador' antes de iniciar um backup.");
             return;
         }
 
@@ -597,7 +1134,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao executar tarefa: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao executar tarefa", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -630,21 +1167,22 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao alternar daemon RC: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro no serviço", $"Erro ao alternar daemon RC: {ex.Message}", OverlayAlertKind.Error);
         }
     }
 
     private async void ApplyBwButton_Click(object sender, RoutedEventArgs e)
     {
-        var rate = (BwLimitCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "off";
+        var item = BwLimitCombo.SelectedItem as ComboBoxItem;
+        var rate = item?.Tag?.ToString() ?? item?.Content?.ToString() ?? "off";
         try
         {
             await _api.SetBandwidthLimitAsync(rate);
-            FooterInfoText.Text = $"Limite de banda ajustado para '{rate}'.";
+            FooterInfoText.Text = $"Limite de velocidade ajustado para '{item?.Content ?? rate}'.";
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao aplicar limite de banda: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao limitar velocidade", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -656,14 +1194,11 @@ public partial class MainWindow : Window
     private async void RefreshDestRemotesButton_Click(object sender, RoutedEventArgs e)
     {
         await RefreshRemotesAndAboutAsync();
-        if (_cachedRemotes.Count > 0 && string.IsNullOrWhiteSpace(JobDestBox.Text))
-        {
-            JobDestBox.Text = _cachedRemotes[0] + "BackupPC/";
-        }
-        else if (_cachedRemotes.Count > 0)
-        {
-            FooterInfoText.Text = $"Remotes disponíveis: {string.Join(", ", _cachedRemotes)}";
-        }
+        PopulateDestTargetCombo();
+        UpdateDestinationControlsState();
+        FooterInfoText.Text = _cachedRemotes.Count > 0
+            ? $"Serviços na nuvem atualizados ({string.Join(", ", _cachedRemotes)})."
+            : "Nenhum serviço na nuvem configurado ainda (você pode criar um na aba Remotes ou salvar em pasta local).";
     }
 
     private async Task RefreshRemotesAndAboutAsync()
@@ -675,8 +1210,10 @@ public partial class MainWindow : Window
             if (remResp != null)
             {
                 _cachedRemotes = remResp.Remotes;
+                PopulateDestTargetCombo();
+                UpdateDestinationControlsState();
                 RemotesListText.Text = _cachedRemotes.Count > 0
-                    ? $"{string.Join(", ", _cachedRemotes)} ({remResp.SourceUsed})"
+                    ? string.Join(", ", _cachedRemotes)
                     : "Nenhum remote configurado";
 
                 var firstRemote = _cachedRemotes.FirstOrDefault();
@@ -733,13 +1270,12 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(path))
             return;
 
-        var confirm = System.Windows.MessageBox.Show(
-            "Isso criará um backup (.bak) do arquivo atual e reordenará as exclusões para o topo antes dos includes (+), corrigindo também a sintaxe '[-- max-size ...]' para '- *'. Deseja continuar?",
+        var confirm = await _overlayHost.ShowConfirmAsync(
             "Otimizar Regras de Filtro",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
+            "Isso criará uma cópia de segurança (.bak) do arquivo atual e organizará automaticamente as regras de exclusão e inclusão. Deseja continuar?",
+            confirmText: "Otimizar Agora");
 
-        if (confirm != MessageBoxResult.Yes)
+        if (!confirm)
             return;
 
         try
@@ -754,7 +1290,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao otimizar arquivo: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao otimizar arquivo", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -771,7 +1307,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao salvar arquivo: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao salvar arquivo", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -857,7 +1393,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao alterar inicialização: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro na inicialização automática", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -873,13 +1409,13 @@ public partial class MainWindow : Window
 
     private async void ShutdownServiceButton_Click(object sender, RoutedEventArgs e)
     {
-        var confirm = System.Windows.MessageBox.Show(
-            "Encerrar o serviço em 2º plano interromperá o agendador e qualquer tarefa em andamento. Continuar?",
-            "Encerrar Serviço",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+        var confirm = await _overlayHost.ShowConfirmAsync(
+            "Encerrar Serviço em 2º Plano",
+            "Encerrar o serviço interromperá o agendador automático e qualquer backup em andamento. Deseja continuar?",
+            confirmText: "Encerrar Serviço",
+            isDanger: true);
 
-        if (confirm != MessageBoxResult.Yes)
+        if (!confirm)
             return;
 
         try
@@ -914,7 +1450,7 @@ public partial class MainWindow : Window
         }
         catch (ArgumentException ex)
         {
-            System.Windows.MessageBox.Show(ex.Message, "Versão Inválida", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await _overlayHost.ShowAlertAsync("Versão Inválida", ex.Message, OverlayAlertKind.Warning);
             return;
         }
 
@@ -949,21 +1485,18 @@ public partial class MainWindow : Window
 
             if (check.NeedsDownload || !File.Exists(expectedExe))
             {
-                var setupWindow = new RcloneSetupWindow(
+                var setupView = new RcloneSetupWindow(
                     workDir,
                     targetVersion,
-                    $"Provisionando e travando a release {targetVersion}...")
-                {
-                    Owner = this
-                };
+                    $"Provisionando e travando a release {targetVersion}...");
 
-                if (setupWindow.ShowDialog() != true || string.IsNullOrWhiteSpace(setupWindow.DownloadedExecutablePath))
+                if (await _overlayHost.ShowAsync(setupView) != true || string.IsNullOrWhiteSpace(setupView.DownloadedExecutablePath))
                 {
                     FooterInfoText.Text = "Alteração de release cancelada.";
                     return;
                 }
 
-                cfg.RcloneExecutablePath = setupWindow.DownloadedExecutablePath;
+                cfg.RcloneExecutablePath = setupView.DownloadedExecutablePath;
             }
             else
             {
@@ -994,7 +1527,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao baixar/travar release: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao baixar/travar release", ex.Message, OverlayAlertKind.Error);
         }
         finally
         {
@@ -1016,7 +1549,7 @@ public partial class MainWindow : Window
         var exe = candidates.FirstOrDefault(File.Exists);
         if (string.IsNullOrWhiteSpace(exe))
         {
-            System.Windows.MessageBox.Show("RcloneManager.Service.exe não encontrado.", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            _ = _overlayHost.ShowAlertAsync("Serviço não encontrado", "RcloneManager.Service.exe não foi encontrado.", OverlayAlertKind.Error);
             return;
         }
 
@@ -1040,7 +1573,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao executar operação de serviço: {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            _ = _overlayHost.ShowAlertAsync("Erro na operação do serviço", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -1092,7 +1625,8 @@ public partial class MainWindow : Window
         var target = string.IsNullOrWhiteSpace(currentRate) ? "off" : currentRate.Trim();
         foreach (ComboBoxItem item in BwLimitCombo.Items)
         {
-            if (string.Equals(item.Content?.ToString(), target, StringComparison.OrdinalIgnoreCase))
+            var tagOrContent = item.Tag?.ToString() ?? item.Content?.ToString();
+            if (string.Equals(tagOrContent, target, StringComparison.OrdinalIgnoreCase))
             {
                 if (BwLimitCombo.SelectedItem != item)
                     BwLimitCombo.SelectedItem = item;
@@ -1143,43 +1677,295 @@ public partial class MainWindow : Window
 
     private void ExitUiKeepingService()
     {
+        _keepServiceOnClose = true;
         _isClosingForReal = true;
         Close();
     }
 
     private async void ExitUiAndService()
     {
+        _keepServiceOnClose = false;
         try { await _api.ShutdownServiceAsync(); } catch { }
         _isClosingForReal = true;
         Close();
     }
 
+    private void InitializeCloseBehaviorUi()
+    {
+        CloseBehaviorCombo.ItemsSource = new[]
+        {
+            new UiOption<CloseWindowBehavior>(CloseWindowBehavior.AskEveryTime, "Perguntar sempre"),
+            new UiOption<CloseWindowBehavior>(CloseWindowBehavior.MinimizeToTray, "Minimizar para a Bandeja"),
+            new UiOption<CloseWindowBehavior>(CloseWindowBehavior.CloseKeepService, "Fechar janela (manter 2º plano)")
+        };
+
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var prefs = UiPreferencesStore.Load(workDir);
+        SyncCloseBehaviorUi(prefs.CloseBehavior);
+        AutoUpdateAppCheck.IsChecked = prefs.AutoUpdateInBackground;
+    }
+
+    private void SyncCloseBehaviorUi(CloseWindowBehavior behavior)
+    {
+        _isUpdatingCloseBehaviorUi = true;
+        try
+        {
+            SelectOption(CloseBehaviorCombo, behavior);
+            MenuCloseAskItem.Header = (behavior == CloseWindowBehavior.AskEveryTime ? "✓ " : "   ") + "Perguntar sempre";
+            MenuCloseTrayItem.Header = (behavior == CloseWindowBehavior.MinimizeToTray ? "✓ " : "   ") + "Minimizar para a Bandeja";
+            MenuCloseExitUiItem.Header = (behavior == CloseWindowBehavior.CloseKeepService ? "✓ " : "   ") + "Fechar Janela (manter 2º plano)";
+        }
+        finally
+        {
+            _isUpdatingCloseBehaviorUi = false;
+        }
+    }
+
+    private void SaveCloseBehaviorPreference(CloseWindowBehavior behavior)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var prefs = UiPreferencesStore.Load(workDir);
+        prefs.CloseBehavior = behavior;
+        UiPreferencesStore.Save(workDir, prefs);
+        SyncCloseBehaviorUi(behavior);
+
+        FooterInfoText.Text = behavior switch
+        {
+            CloseWindowBehavior.MinimizeToTray => "Preferência salva: ao fechar [X], o aplicativo minimizará para a Bandeja.",
+            CloseWindowBehavior.CloseKeepService => "Preferência salva: ao fechar [X], a janela fechará mantendo o serviço em 2º plano.",
+            _ => "Preferência salva: o aplicativo perguntará o que fazer ao clicar em fechar [X]."
+        };
+    }
+
+    private void AutoUpdateAppCheck_Click(object sender, RoutedEventArgs e)
+    {
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var prefs = UiPreferencesStore.Load(workDir);
+        prefs.AutoUpdateInBackground = AutoUpdateAppCheck.IsChecked == true;
+        UiPreferencesStore.Save(workDir, prefs);
+
+        FooterInfoText.Text = prefs.AutoUpdateInBackground
+            ? "Atualização automática em segundo plano ativada."
+            : "Atualização automática em segundo plano desativada.";
+
+        if (prefs.AutoUpdateInBackground)
+            _ = CheckAppUpdateInBackgroundAsync();
+    }
+
+    private void SetStagedUpdateReady(PendingAppUpdateInfo pending)
+    {
+        _stagedUpdate = pending;
+        UpdateReadyButton.Content = $"✦ Atualização {pending.VersionTag} pronta";
+        UpdateReadyButton.Visibility = Visibility.Visible;
+        UpdateReadyButton.ToolTip = $"Nova versão {pending.VersionTag} já baixada. Será instalada automaticamente ao fechar (ou clique para reiniciar agora).";
+    }
+
+    private async Task CheckAppUpdateInBackgroundAsync()
+    {
+        if (_updateCheckInFlight)
+            return;
+
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var prefs = UiPreferencesStore.Load(workDir);
+        if (!prefs.AutoUpdateInBackground)
+            return;
+
+        // Em ambiente de desenvolvimento (src/.../bin/Debug), não sobrescreve os binários automaticamente
+        if (AppAutoUpdater.IsDevelopmentBuild(workDir))
+            return;
+
+        _updateCheckInFlight = true;
+        try
+        {
+            var res = await AppAutoUpdater.CheckAndStageUpdateAsync(
+                workDir,
+                downloadAndStageIfAvailable: true);
+
+            if (res.IsStagedAndReady && res.PendingUpdate != null)
+            {
+                SetStagedUpdateReady(res.PendingUpdate);
+                FooterInfoText.Text = res.StatusMessage;
+            }
+        }
+        catch
+        {
+            // Falha silenciosa em verificação de fundo
+        }
+        finally
+        {
+            _updateCheckInFlight = false;
+        }
+    }
+
+    private async void UpdateReadyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_stagedUpdate == null)
+            return;
+
+        var notesPreview = string.IsNullOrWhiteSpace(_stagedUpdate.ReleaseNotes)
+            ? "Melhorias de estabilidade e correções."
+            : (_stagedUpdate.ReleaseNotes.Length > 420
+                ? _stagedUpdate.ReleaseNotes[..420].Trim() + "..."
+                : _stagedUpdate.ReleaseNotes.Trim());
+
+        var restartNow = await _overlayHost.ShowConfirmAsync(
+            $"Atualização {_stagedUpdate.VersionTag} Pronta",
+            $"A nova versão {_stagedUpdate.VersionTag} já foi baixada e verificada em segundo plano.\n\n" +
+            $"Novidades:\n{notesPreview}\n\n" +
+            "Ela será aplicada automaticamente quando você fechar o aplicativo, ou você pode reiniciar agora.",
+            confirmText: "Reiniciar e Atualizar Agora",
+            cancelText: "Aplicar ao Fechar");
+
+        if (!restartNow)
+            return;
+
+        if (_lastStatus?.ActiveJob != null)
+        {
+            await _overlayHost.ShowAlertAsync(
+                "Backup em Andamento",
+                $"A tarefa '{_lastStatus.ActiveJob.JobName}' está enviando arquivos agora. A atualização será aplicada automaticamente assim que o backup terminar e você fechar ou reabrir o aplicativo.",
+                OverlayAlertKind.Warning);
+            return;
+        }
+
+        _relaunchUiAfterUpdate = true;
+        _keepServiceOnClose = false;
+        _isClosingForReal = true;
+        Close();
+    }
+
+    private async void MenuCheckAppUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateCheckInFlight)
+        {
+            FooterInfoText.Text = "Verificação de atualização já está em andamento...";
+            return;
+        }
+
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var isDev = AppAutoUpdater.IsDevelopmentBuild(workDir);
+
+        _updateCheckInFlight = true;
+        FooterInfoText.Text = "Verificando atualizações nas Releases do GitHub...";
+        try
+        {
+            var progress = new Progress<string>(msg => FooterInfoText.Text = msg);
+            var res = await AppAutoUpdater.CheckAndStageUpdateAsync(
+                workDir,
+                downloadAndStageIfAvailable: !isDev,
+                statusProgress: progress);
+
+            FooterInfoText.Text = res.StatusMessage;
+
+            if (!res.UpdateAvailable)
+            {
+                await _overlayHost.ShowAlertAsync("Atualizações do RcloneManager", res.StatusMessage);
+                return;
+            }
+
+            if (isDev)
+            {
+                var openPage = await _overlayHost.ShowConfirmAsync(
+                    $"Nova Versão {res.LatestVersionTag} Disponível",
+                    $"Você está executando a partir do código-fonte de desenvolvimento (v{res.CurrentVersion}).\n" +
+                    $"Na versão portátil publicada, o pacote .zip é baixado e aplicado automaticamente.\n\nDeseja abrir a página da Release no GitHub?",
+                    confirmText: "Abrir Release no GitHub",
+                    cancelText: "Fechar");
+
+                if (openPage && !string.IsNullOrWhiteSpace(res.ReleaseUrl))
+                    OpenShellTarget(res.ReleaseUrl);
+                return;
+            }
+
+            if (res.IsStagedAndReady && res.PendingUpdate != null)
+            {
+                SetStagedUpdateReady(res.PendingUpdate);
+                UpdateReadyButton_Click(sender, e);
+            }
+            else
+            {
+                await _overlayHost.ShowAlertAsync("Atualizações do RcloneManager", res.StatusMessage, OverlayAlertKind.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            await _overlayHost.ShowAlertAsync("Erro ao verificar atualizações", ex.Message, OverlayAlertKind.Error);
+        }
+        finally
+        {
+            _updateCheckInFlight = false;
+        }
+    }
+
+    private void TryLaunchPendingUpdateOnExit()
+    {
+        if (_updateApplierLaunched)
+            return;
+
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        if (AppAutoUpdater.IsDevelopmentBuild(workDir))
+            return;
+
+        var pending = _stagedUpdate ?? AppAutoUpdater.TryGetValidPendingUpdate(workDir);
+        if (pending == null)
+            return;
+
+        // Não interrompe um backup ativo em 2º plano ao fechar só a janela; ficará pronto para a próxima abertura
+        if (!_relaunchUiAfterUpdate && _keepServiceOnClose && _lastStatus?.ActiveJob != null)
+            return;
+
+        if (AppAutoUpdater.LaunchDetachedUpdateApplier(
+                workDir,
+                pending,
+                relaunchUiAfterUpdate: _relaunchUiAfterUpdate,
+                restartBackgroundServiceIfNotRelaunchingUi: _keepServiceOnClose))
+        {
+            _updateApplierLaunched = true;
+        }
+    }
+
+    private void CloseBehaviorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingCloseBehaviorUi)
+            return;
+
+        var selected = GetSelectedOption(CloseBehaviorCombo, CloseWindowBehavior.AskEveryTime);
+        SaveCloseBehaviorPreference(selected);
+    }
+
+    private void MenuCloseAsk_Click(object sender, RoutedEventArgs e) =>
+        SaveCloseBehaviorPreference(CloseWindowBehavior.AskEveryTime);
+
+    private void MenuCloseTray_Click(object sender, RoutedEventArgs e) =>
+        SaveCloseBehaviorPreference(CloseWindowBehavior.MinimizeToTray);
+
+    private void MenuCloseExitUi_Click(object sender, RoutedEventArgs e) =>
+        SaveCloseBehaviorPreference(CloseWindowBehavior.CloseKeepService);
+
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (_isClosingForReal)
         {
+            TryLaunchPendingUpdateOnExit();
             _pollTimer.Stop();
+            _updateCheckTimer.Stop();
             _trayIcon.Dispose();
             _api.Dispose();
             return;
         }
 
-        var choice = System.Windows.MessageBox.Show(
-            "Deseja minimizar para a Bandeja do Sistema (Sim) ou fechar a interface mantendo apenas o Serviço em 2º plano (Não)?\n\n" +
-            "• Sim = Minimizar para a Bandeja\n" +
-            "• Não = Fechar Interface (Serviço continua ativo)\n" +
-            "• Cancelar = Voltar à janela",
-            "Fechar RcloneManager",
-            MessageBoxButton.YesNoCancel,
-            MessageBoxImage.Question);
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        var behavior = UiPreferencesStore.Load(workDir).CloseBehavior;
 
-        if (choice == MessageBoxResult.Cancel)
+        if (behavior == CloseWindowBehavior.AskEveryTime)
         {
             e.Cancel = true;
+            if (!_isClosePromptOpen)
+                _ = PromptCloseOverlayAsync();
             return;
         }
 
-        if (choice == MessageBoxResult.Yes)
+        if (behavior == CloseWindowBehavior.MinimizeToTray)
         {
             e.Cancel = true;
             Hide();
@@ -1187,15 +1973,53 @@ public partial class MainWindow : Window
             return;
         }
 
-        // MessageBoxResult.No -> fecha a UI mantendo o serviço
+        // CloseKeepService -> fecha a UI mantendo o serviço
+        _keepServiceOnClose = true;
         _isClosingForReal = true;
+        TryLaunchPendingUpdateOnExit();
         _pollTimer.Stop();
+        _updateCheckTimer.Stop();
         _trayIcon.Dispose();
         _api.Dispose();
     }
 
+    private async Task PromptCloseOverlayAsync()
+    {
+        _isClosePromptOpen = true;
+        try
+        {
+            var prompt = new ClosePromptWindow();
+            if (await _overlayHost.ShowAsync(prompt) != true)
+                return;
+
+            var behavior = prompt.SelectedBehavior;
+            if (prompt.RememberChoice)
+                SaveCloseBehaviorPreference(behavior);
+
+            if (behavior == CloseWindowBehavior.MinimizeToTray)
+            {
+                Hide();
+                _trayIcon.ShowBalloon("RcloneManager", "O aplicativo continua rodando na bandeja do sistema.");
+                return;
+            }
+
+            ExitUiKeepingService();
+        }
+        finally
+        {
+            _isClosePromptOpen = false;
+        }
+    }
+
     private void Window_PreviewKeyDown(object sender, WpfInput.KeyEventArgs e)
     {
+        if (_overlayHost.HasActiveOverlay)
+        {
+            if (e.Key == WpfInput.Key.Escape && _overlayHost.TryDismissTop())
+                e.Handled = true;
+            return;
+        }
+
         if (WpfInput.Keyboard.Modifiers != WpfInput.ModifierKeys.Control)
             return;
 
@@ -1308,17 +2132,15 @@ public partial class MainWindow : Window
 
             store.ExportPortableConfig(dialog.FileName, cfg, remotes);
             FooterInfoText.Text = $"Configuração portátil exportada para '{dialog.FileName}'.";
-            System.Windows.MessageBox.Show(
-                $"Configuração exportada para:\n{dialog.FileName}\n\n" +
-                "Por segurança, tokens OAuth, senhas e a chave AES-256 do Windows Credential Manager NÃO foram incluídos.\n" +
-                "Ao importar este arquivo em outra instalação, o Assistente Inicial gerará uma nova chave e conduzirá a autenticação dos serviços apontados.",
+            await _overlayHost.ShowAlertAsync(
                 "Exportação Concluída",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                $"Configuração exportada para:\n{dialog.FileName}\n\n" +
+                "Por segurança, tokens e senhas NÃO foram incluídos neste arquivo.\n" +
+                "Ao importar em outro computador, o Assistente Inicial guiará a conexão das contas.");
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao exportar configuração: {ex.Message}", "Exportar Configuração", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao exportar configuração", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -1327,7 +2149,7 @@ public partial class MainWindow : Window
         var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
         using var dialog = new WinForms.OpenFileDialog
         {
-            Title = "Importar Configuração pelo Assistente (Wizard)",
+            Title = "Importar Configuração pelo Assistente",
             Filter = "Configuração RcloneManager (*.json)|*.json|Todos os arquivos (*.*)|*.*",
             InitialDirectory = workDir
         };
@@ -1335,27 +2157,24 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != WinForms.DialogResult.OK)
             return;
 
-        var wizard = new FirstRunWizardWindow(workDir, _api, dialog.FileName)
-        {
-            Owner = this
-        };
+        var wizard = new FirstRunWizardWindow(workDir, _api, dialog.FileName);
 
-        if (wizard.ShowDialog() == true)
+        if (await _overlayHost.ShowAsync(wizard) == true)
         {
             _selectedJobId = null;
             _initialProvidersLoaded = false;
             await PollServiceAsync();
             await RefreshRemotesTabDataAsync();
             await RefreshRemotesAndAboutAsync();
-            FooterInfoText.Text = $"Configuração de '{Path.GetFileName(dialog.FileName)}' importada, autenticada e revisada com nova chave no Cofre do Windows.";
+            FooterInfoText.Text = $"Configuração de '{Path.GetFileName(dialog.FileName)}' importada e aplicada com sucesso.";
         }
     }
 
     private async void MenuRunWizard_Click(object sender, RoutedEventArgs e)
     {
         var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
-        var wizard = new FirstRunWizardWindow(workDir, _api) { Owner = this };
-        if (wizard.ShowDialog() == true)
+        var wizard = new FirstRunWizardWindow(workDir, _api);
+        if (await _overlayHost.ShowAsync(wizard) == true)
         {
             await PollServiceAsync();
             await RefreshRemotesTabDataAsync();
@@ -1366,8 +2185,8 @@ public partial class MainWindow : Window
 
     private async void MenuResetConfig_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new ResetConfigWindow { Owner = this };
-        if (dialog.ShowDialog() != true)
+        var dialog = new ResetConfigWindow();
+        if (await _overlayHost.ShowAsync(dialog) != true)
             return;
 
         try
@@ -1390,6 +2209,10 @@ public partial class MainWindow : Window
                 store.ResetConfig(dialog.DeleteCredentialKey, dialog.DeleteLogsAndRuntime, dialog.DeleteRcloneConf);
             }
 
+            UiPreferencesStore.Reset(workDir);
+            SyncCloseBehaviorUi(CloseWindowBehavior.AskEveryTime);
+            AutoUpdateAppCheck.IsChecked = true;
+
             _selectedJobId = null;
             _initialProvidersLoaded = false;
             await PollServiceAsync();
@@ -1401,8 +2224,8 @@ public partial class MainWindow : Window
 
             if (dialog.ReopenWizard)
             {
-                var wizard = new FirstRunWizardWindow(workDir, _api) { Owner = this };
-                if (wizard.ShowDialog() == true)
+                var wizard = new FirstRunWizardWindow(workDir, _api);
+                if (await _overlayHost.ShowAsync(wizard) == true)
                 {
                     await PollServiceAsync();
                     await RefreshRemotesTabDataAsync();
@@ -1412,7 +2235,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao resetar configurações: {ex.Message}", "Resetar Configurações", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao resetar configurações", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -1427,15 +2250,15 @@ public partial class MainWindow : Window
         ExitUiKeepingService();
     }
 
-    private void MenuExitAll_Click(object sender, RoutedEventArgs e)
+    private async void MenuExitAll_Click(object sender, RoutedEventArgs e)
     {
-        var confirm = System.Windows.MessageBox.Show(
-            "Isso encerrará a interface e o serviço de agendamento em segundo plano. Continuar?",
+        var confirm = await _overlayHost.ShowConfirmAsync(
             "Sair do RcloneManager",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
+            "Isso encerrará tanto esta janela quanto o serviço de agendamento em segundo plano. Deseja continuar?",
+            confirmText: "Encerrar Tudo",
+            isDanger: true);
 
-        if (confirm == MessageBoxResult.Yes)
+        if (confirm)
             ExitUiAndService();
     }
 
@@ -1477,11 +2300,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        System.Windows.MessageBox.Show(
-            $"{check.StatusMessage}\n\nCaminho: {check.ExecutablePath}\nVersão Instalada: {check.InstalledVersion}\nRelease Travada: {check.PinnedVersion} ({(check.IsLocked ? "Ativa" : "Livre")})",
+        await _overlayHost.ShowAlertAsync(
             "Verificação de Release do Rclone",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+            $"{check.StatusMessage}\n\nCaminho: {check.ExecutablePath}\nVersão Instalada: {check.InstalledVersion}\nRelease Travada: {check.PinnedVersion} ({(check.IsLocked ? "Ativa" : "Livre")})");
     }
 
     private void MenuCopyDiagnostics_Click(object sender, RoutedEventArgs e)
@@ -1505,13 +2326,10 @@ public partial class MainWindow : Window
         FooterInfoText.Text = "Informações de diagnóstico copiadas para a Área de Transferência.";
     }
 
-    private void MenuAbout_Click(object sender, RoutedEventArgs e)
+    private async void MenuAbout_Click(object sender, RoutedEventArgs e)
     {
-        var about = new AboutWindow(_lastStatus, ServiceLauncher.ResolveWorkspaceDirectory())
-        {
-            Owner = this
-        };
-        about.ShowDialog();
+        var about = new AboutWindow(_lastStatus, ServiceLauncher.ResolveWorkspaceDirectory());
+        await _overlayHost.ShowAsync(about);
     }
 
     private static void OpenShellTarget(string target)
@@ -1526,7 +2344,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Não foi possível abrir '{target}': {ex.Message}", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _ = OverlayHost.ShowCurrentAlertAsync("Não foi possível abrir", $"Não foi possível abrir '{target}': {ex.Message}", OverlayAlertKind.Warning);
         }
     }
 
@@ -1754,7 +2572,7 @@ public partial class MainWindow : Window
 
         if (!File.Exists(cfg.RcloneExecutablePath))
         {
-            System.Windows.MessageBox.Show($"rclone.exe não encontrado em '{cfg.RcloneExecutablePath}'.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+            _ = _overlayHost.ShowAlertAsync("Rclone não encontrado", $"rclone.exe não encontrado em '{cfg.RcloneExecutablePath}'.", OverlayAlertKind.Error);
             return;
         }
 
@@ -1950,13 +2768,13 @@ public partial class MainWindow : Window
         var remoteName = RemoteNameBox.Text.Trim().TrimEnd(':');
         if (string.IsNullOrWhiteSpace(remoteName))
         {
-            System.Windows.MessageBox.Show("Informe um nome para o remote.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await _overlayHost.ShowAlertAsync("Remotes", "Informe um nome para o serviço (ex.: gdrive).", OverlayAlertKind.Warning);
             return;
         }
 
         if (RemoteProviderCombo.SelectedItem is not ProviderListItem provItem)
         {
-            System.Windows.MessageBox.Show("Selecione o provedor/tipo do remote.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await _overlayHost.ShowAlertAsync("Remotes", "Selecione o provedor/tipo do serviço.", OverlayAlertKind.Warning);
             return;
         }
 
@@ -1993,7 +2811,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             RemoteSaveStatusText.Text = $"Erro: {ex.Message}";
-            System.Windows.MessageBox.Show($"Falha ao salvar remote: {ex.Message}", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Falha ao salvar remote", ex.Message, OverlayAlertKind.Error);
         }
         finally
         {
@@ -2006,7 +2824,7 @@ public partial class MainWindow : Window
         var name = (RemotesGrid.SelectedItem as RemoteRowItem)?.Name ?? RemoteNameBox.Text.Trim().TrimEnd(':');
         if (string.IsNullOrWhiteSpace(name))
         {
-            System.Windows.MessageBox.Show("Selecione um remote na lista para reautenticar.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Information);
+            await _overlayHost.ShowAlertAsync("Remotes", "Selecione um serviço na lista para reautenticar.");
             return;
         }
 
@@ -2023,7 +2841,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             RemoteSaveStatusText.Text = string.Empty;
-            System.Windows.MessageBox.Show($"Erro ao reautenticar '{name}:': {ex.Message}", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync($"Erro ao reautenticar '{name}:'", ex.Message, OverlayAlertKind.Error);
         }
         finally
         {
@@ -2036,7 +2854,7 @@ public partial class MainWindow : Window
         var name = (RemotesGrid.SelectedItem as RemoteRowItem)?.Name ?? RemoteNameBox.Text.Trim().TrimEnd(':');
         if (string.IsNullOrWhiteSpace(name))
         {
-            System.Windows.MessageBox.Show("Selecione um remote na lista para testar.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Information);
+            await _overlayHost.ShowAlertAsync("Remotes", "Selecione um serviço na lista para testar a conexão.");
             return;
         }
 
@@ -2078,17 +2896,17 @@ public partial class MainWindow : Window
         var name = (RemotesGrid.SelectedItem as RemoteRowItem)?.Name;
         if (string.IsNullOrWhiteSpace(name))
         {
-            System.Windows.MessageBox.Show("Selecione um remote na lista para excluir.", "Remotes", MessageBoxButton.OK, MessageBoxImage.Information);
+            await _overlayHost.ShowAlertAsync("Remotes", "Selecione um serviço na lista para excluir.");
             return;
         }
 
-        var confirm = System.Windows.MessageBox.Show(
-            $"Deseja realmente excluir o remote '{name}:' do rclone.conf?\n(Isso não apaga os arquivos na nuvem, apenas remove a configuração local).",
-            "Excluir Remote",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+        var confirm = await _overlayHost.ShowConfirmAsync(
+            "Excluir Serviço Conectado",
+            $"Deseja realmente excluir '{name}:' da configuração local?\n(Isso não apaga seus arquivos na nuvem, apenas remove o acesso salvo neste PC).",
+            confirmText: "Excluir",
+            isDanger: true);
 
-        if (confirm != MessageBoxResult.Yes)
+        if (!confirm)
             return;
 
         try
@@ -2102,7 +2920,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Erro ao excluir remote: {ex.Message}", "Remotes", MessageBoxButton.OK, MessageBoxImage.Error);
+            await _overlayHost.ShowAlertAsync("Erro ao excluir remote", ex.Message, OverlayAlertKind.Error);
         }
     }
 
@@ -2121,7 +2939,7 @@ public partial class MainWindow : Window
 
         if (!File.Exists(cfg.RcloneExecutablePath))
         {
-            System.Windows.MessageBox.Show($"rclone.exe não encontrado em '{cfg.RcloneExecutablePath}'.", "RcloneManager", MessageBoxButton.OK, MessageBoxImage.Error);
+            _ = _overlayHost.ShowAlertAsync("Rclone não encontrado", $"rclone.exe não encontrado em '{cfg.RcloneExecutablePath}'.", OverlayAlertKind.Error);
             return;
         }
 
