@@ -1,5 +1,7 @@
 # RcloneManager
 
+> 🇧🇷 **Português** | 🇺🇸 [English](README.en.md)
+
 Interface Desktop (**WPF**) e Serviço em segundo plano (**ASP.NET Core + Windows Service**) em **.NET 10** para controlar o [Rclone](https://rclone.org/) no Windows com motor híbrido (**API HTTP RC + CLI**), agendador automático de tarefas, telemetria de transferências ao vivo, otimizador de filtros e provisionamento automático com trava de release (**SHA-256**).
 
 🌐 **Página do Projeto (GitHub Pages):** [dillemon-recla.github.io/RcloneManager](https://dillemon-recla.github.io/RcloneManager/)
