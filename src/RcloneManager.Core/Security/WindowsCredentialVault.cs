@@ -3,18 +3,21 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 
-[assembly: System.Runtime.Versioning.SupportedOSPlatform("windows")]
+[assembly: SupportedOSPlatform("windows")]
 
 namespace RcloneManager.Core.Security;
 
-public static class WindowsCredentialVault
+[SupportedOSPlatform("windows")]
+public sealed class WindowsCredentialMasterKeyStore : IMasterKeyStore
 {
-    public const string DefaultTargetName = "RcloneManager:MasterKey";
+    public static WindowsCredentialMasterKeyStore Shared { get; } = new();
 
     private const uint CredTypeGeneric = 1;
     private const uint CredPersistLocalMachine = 2;
     private const int KeyLengthBytes = 32;
     private static readonly object VaultLock = new();
+
+    public string DefaultTargetName => WindowsCredentialVault.DefaultTargetName;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CREDENTIAL
@@ -45,31 +48,32 @@ public static class WindowsCredentialVault
     [DllImport("advapi32.dll", EntryPoint = "CredFree", SetLastError = true)]
     private static extern void CredFree(IntPtr cred);
 
-    public static bool KeyExists(string targetName = DefaultTargetName)
+    public bool KeyExists(string? targetName = null)
     {
+        var target = ResolveTarget(targetName);
         lock (VaultLock)
         {
-            if (CredRead(targetName, CredTypeGeneric, 0, out var credPtr))
+            if (!CredRead(target, CredTypeGeneric, 0, out var credPtr))
+                return false;
+
+            try
             {
-                try
-                {
-                    var cred = Marshal.PtrToStructure<CREDENTIAL>(credPtr);
-                    return cred.CredentialBlobSize == KeyLengthBytes && cred.CredentialBlob != IntPtr.Zero;
-                }
-                finally
-                {
-                    CredFree(credPtr);
-                }
+                var cred = Marshal.PtrToStructure<CREDENTIAL>(credPtr);
+                return cred.CredentialBlobSize == KeyLengthBytes && cred.CredentialBlob != IntPtr.Zero;
             }
-            return false;
+            finally
+            {
+                CredFree(credPtr);
+            }
         }
     }
 
-    public static byte[] GetOrCreateMasterKey(out bool wasCreated, string targetName = DefaultTargetName)
+    public byte[] GetOrCreateKey(out bool wasCreated, string? targetName = null)
     {
+        var target = ResolveTarget(targetName);
         lock (VaultLock)
         {
-            if (CredRead(targetName, CredTypeGeneric, 0, out var credPtr))
+            if (CredRead(target, CredTypeGeneric, 0, out var credPtr))
             {
                 try
                 {
@@ -89,29 +93,34 @@ public static class WindowsCredentialVault
             }
 
             var newKey = RandomNumberGenerator.GetBytes(KeyLengthBytes);
-            WriteKeyInternal(newKey, targetName);
+            WriteKeyInternal(newKey, target);
             wasCreated = true;
             return newKey;
         }
     }
 
-    public static bool DeleteMasterKey(string targetName = DefaultTargetName)
+    public byte[] RotateKey(string? targetName = null)
     {
-        lock (VaultLock)
-        {
-            return CredDelete(targetName, CredTypeGeneric, 0);
-        }
-    }
-
-    public static byte[] RegenerateMasterKey(string targetName = DefaultTargetName)
-    {
+        var target = ResolveTarget(targetName);
         lock (VaultLock)
         {
             var newKey = RandomNumberGenerator.GetBytes(KeyLengthBytes);
-            WriteKeyInternal(newKey, targetName);
+            WriteKeyInternal(newKey, target);
             return newKey;
         }
     }
+
+    public bool DeleteKey(string? targetName = null)
+    {
+        var target = ResolveTarget(targetName);
+        lock (VaultLock)
+        {
+            return CredDelete(target, CredTypeGeneric, 0);
+        }
+    }
+
+    private string ResolveTarget(string? targetName) =>
+        string.IsNullOrWhiteSpace(targetName) ? DefaultTargetName : targetName;
 
     private static void WriteKeyInternal(byte[] key, string targetName)
     {
@@ -124,7 +133,7 @@ public static class WindowsCredentialVault
                 Flags = 0,
                 Type = CredTypeGeneric,
                 TargetName = targetName,
-                Comment = "Chave AES-256 do RcloneManager para criptografia de dados sensiveis",
+                Comment = "Chave descartavel AES-256 do RcloneManager para protecao local de dados sensiveis",
                 CredentialBlobSize = (uint)key.Length,
                 CredentialBlob = blobPtr,
                 Persist = CredPersistLocalMachine,
@@ -147,4 +156,21 @@ public static class WindowsCredentialVault
             Marshal.FreeHGlobal(blobPtr);
         }
     }
+}
+
+public static class WindowsCredentialVault
+{
+    public const string DefaultTargetName = "RcloneManager:MasterKey";
+
+    public static bool KeyExists(string targetName = DefaultTargetName) =>
+        WindowsCredentialMasterKeyStore.Shared.KeyExists(targetName);
+
+    public static byte[] GetOrCreateMasterKey(out bool wasCreated, string targetName = DefaultTargetName) =>
+        WindowsCredentialMasterKeyStore.Shared.GetOrCreateKey(out wasCreated, targetName);
+
+    public static bool DeleteMasterKey(string targetName = DefaultTargetName) =>
+        WindowsCredentialMasterKeyStore.Shared.DeleteKey(targetName);
+
+    public static byte[] RegenerateMasterKey(string targetName = DefaultTargetName) =>
+        WindowsCredentialMasterKeyStore.Shared.RotateKey(targetName);
 }

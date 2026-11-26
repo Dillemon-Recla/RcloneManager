@@ -84,8 +84,8 @@ public sealed class UpdateReleaseConfigRequest
 
 public sealed class ResetConfigRequest
 {
-    public bool DeleteCredentialKey { get; set; }
-    public bool DeleteLogsAndRuntime { get; set; }
+    public bool DeleteCredentialKey { get; set; } = true;
+    public bool DeleteLogsAndRuntime { get; set; } = true;
     public bool DeleteRcloneConf { get; set; }
 }
 

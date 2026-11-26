@@ -38,8 +38,13 @@ public static class RcloneCliRunner
             StandardErrorEncoding = Encoding.UTF8
         };
 
-        if (!string.IsNullOrWhiteSpace(rcloneConfigPath) && File.Exists(rcloneConfigPath))
+        if (!string.IsNullOrWhiteSpace(rcloneConfigPath))
         {
+            var cfgDir = Path.GetDirectoryName(rcloneConfigPath);
+            if (!string.IsNullOrWhiteSpace(cfgDir) && !Directory.Exists(cfgDir))
+            {
+                try { Directory.CreateDirectory(cfgDir); } catch { }
+            }
             psi.ArgumentList.Add("--config");
             psi.ArgumentList.Add(rcloneConfigPath);
         }

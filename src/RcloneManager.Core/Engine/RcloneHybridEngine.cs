@@ -509,20 +509,48 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
             }
         }
 
-        if (!req.IsUpdate && effectiveAuthMode == RemoteAuthMode.OAuthBrowserLink)
+        if (effectiveAuthMode == RemoteAuthMode.OAuthBrowserLink)
         {
-            var args = new List<string> { "config", "create", remoteName, req.Type.Trim() };
+            // Se o daemon rcd estiver ativo, paramos antes de gravar no rclone.conf via CLI para evitar cache defasado.
+            if (IsRcDaemonRunning)
+                await StopRcDaemonAsync();
+
+            if (req.IsUpdate && !string.IsNullOrWhiteSpace(req.Type))
+            {
+                try
+                {
+                    var (existingDetails, _) = await GetRemotesDetailsHybridAsync(config, ct);
+                    var existing = existingDetails.FirstOrDefault(r => r.Name.Equals(remoteName, StringComparison.OrdinalIgnoreCase));
+                    if (existing != null && !existing.Type.Equals(req.Type.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        await DeleteRemoteHybridAsync(config, remoteName, ct);
+                        req.IsUpdate = false;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            var args = req.IsUpdate
+                ? new List<string> { "config", "update", remoteName }
+                : new List<string> { "config", "create", remoteName, req.Type.Trim() };
+
             foreach (var (k, v) in cleanParams)
             {
                 args.Add($"{k}={v}");
             }
+
+            args.Add("config_is_local=true");
+            if (req.IsUpdate)
+                args.Add("config_refresh_token=true");
             if (req.ObscurePasswords)
                 args.Add("--obscure");
 
             using var oauthCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             oauthCts.CancelAfter(TimeSpan.FromMinutes(3));
 
-            _log.Info($"Iniciando criação de remote '{remoteName}' ({req.Type}) via Link (CLI + OAuth no navegador)...");
+            _log.Info($"Aguardando autenticação OAuth no navegador para '{remoteName}' ({req.Type})...");
             var (exitCode, _, stdErr) = await RcloneCliRunner.RunSimpleCommandAsync(
                 config.RcloneExecutablePath,
                 config.RcloneConfigPath,
@@ -532,9 +560,31 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
                 closeStdInImmediately: true);
 
             if (exitCode != 0)
-                throw new InvalidOperationException($"Falha ao criar remote '{remoteName}': {stdErr}");
+                throw new InvalidOperationException($"Falha ou cancelamento ao autenticar '{remoteName}': {stdErr}");
 
-            return $"Remote '{remoteName}:' criado e autenticado via Link (OAuth no navegador).";
+            var (postDetails, _) = await GetRemotesDetailsHybridAsync(config, ct);
+            var savedRemote = postDetails.FirstOrDefault(r => r.Name.Equals(remoteName, StringComparison.OrdinalIgnoreCase));
+            if (savedRemote == null || !savedRemote.HasToken)
+                throw new InvalidOperationException($"A autorização no navegador para '{remoteName}' não gerou um token válido.");
+
+            return $"Conta '{remoteName}:' autenticada com sucesso pelo navegador.";
+        }
+
+        if (req.IsUpdate && !string.IsNullOrWhiteSpace(req.Type))
+        {
+            try
+            {
+                var (existingDetails, _) = await GetRemotesDetailsHybridAsync(config, ct);
+                var existing = existingDetails.FirstOrDefault(r => r.Name.Equals(remoteName, StringComparison.OrdinalIgnoreCase));
+                if (existing != null && !existing.Type.Equals(req.Type.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    await DeleteRemoteHybridAsync(config, remoteName, ct);
+                    req.IsUpdate = false;
+                }
+            }
+            catch
+            {
+            }
         }
 
         var usedStrategy = string.Empty;
@@ -588,12 +638,6 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
             usedStrategy = $"CLI (rclone config {(req.IsUpdate ? "update" : "create")})";
         }
 
-        if (req.IsUpdate && effectiveAuthMode == RemoteAuthMode.OAuthBrowserLink)
-        {
-            var oauthMsg = await ReconnectRemoteOAuthAsync(config, remoteName, ct);
-            return $"{usedStrategy} + {oauthMsg}";
-        }
-
         var modeDesc = effectiveAuthMode == RemoteAuthMode.ManualTokenJson
             ? "Token JSON Manual"
             : "Chave / Credenciais";
@@ -610,6 +654,9 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
         if (!IsValidRemoteName(cleanName))
             throw new ArgumentException("Nome de remote inválido.");
 
+        if (IsRcDaemonRunning)
+            await StopRcDaemonAsync();
+
         using var oauthCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         oauthCts.CancelAfter(TimeSpan.FromMinutes(3));
 
@@ -618,12 +665,12 @@ public sealed class RcloneHybridEngine : IAsyncDisposable
             config.RcloneExecutablePath,
             config.RcloneConfigPath,
             config.WorkingDirectory,
-            new[] { "config", "reconnect", $"{cleanName}:" },
+            new[] { "config", "update", cleanName, "config_refresh_token=true", "config_is_local=true" },
             oauthCts.Token,
             closeStdInImmediately: true);
 
         if (exitCode != 0)
-            throw new InvalidOperationException($"rclone config reconnect falhou: {stdErr}");
+            throw new InvalidOperationException($"Falha ao reconectar '{cleanName}': {stdErr}");
 
         _log.Info($"Remote '{cleanName}:' reautenticado com sucesso.");
         return $"Reautenticação OAuth concluída para '{cleanName}:'.";

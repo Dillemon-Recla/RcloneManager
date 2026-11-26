@@ -9,7 +9,7 @@ namespace RcloneManager.Core.Scheduling;
 
 public sealed class JobScheduler
 {
-    private readonly AppConfigStore _store;
+    private readonly IAppConfigRepository _store;
     private readonly RcloneHybridEngine _engine;
     private readonly ServiceLogBuffer _log;
     private readonly SemaphoreSlim _executionLock = new(1, 1);
@@ -21,11 +21,11 @@ public sealed class JobScheduler
     private AppManagerConfig _config;
     private bool _startupJobsEvaluated;
 
-    public JobScheduler(AppConfigStore store, RcloneHybridEngine engine, ServiceLogBuffer log)
+    public JobScheduler(IAppConfigRepository store, RcloneHybridEngine engine, ServiceLogBuffer log)
     {
-        _store = store;
-        _engine = engine;
-        _log = log;
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        _engine = engine ?? throw new ArgumentNullException(nameof(engine));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
         _config = _store.LoadOrCreateDefault();
         InitializeNextRuns();
     }
@@ -34,23 +34,7 @@ public sealed class JobScheduler
     {
         lock (_configLock)
         {
-            return new AppManagerConfig
-            {
-                RcloneExecutablePath = _config.RcloneExecutablePath,
-                RcloneConfigPath = _config.RcloneConfigPath,
-                WorkingDirectory = _config.WorkingDirectory,
-                PinnedRcloneVersion = _config.PinnedRcloneVersion,
-                LockRcloneVersion = _config.LockRcloneVersion,
-                FirstRunCompleted = _config.FirstRunCompleted,
-                EncryptionEnabled = _config.EncryptionEnabled,
-                EncryptionKeyTarget = _config.EncryptionKeyTarget,
-                ProtectedSecrets = new Dictionary<string, string>(_config.ProtectedSecrets, StringComparer.OrdinalIgnoreCase),
-                ServiceApiPort = _config.ServiceApiPort,
-                PersistentRcdPort = _config.PersistentRcdPort,
-                AutoStartRcdDaemon = _config.AutoStartRcdDaemon,
-                GlobalBandwidthLimit = _config.GlobalBandwidthLimit,
-                Jobs = _config.Jobs.Select(CloneJob).ToList()
-            };
+            return _config.Clone();
         }
     }
 
@@ -402,40 +386,5 @@ public sealed class JobScheduler
         return new TimeSpan(14, 0, 0);
     }
 
-    private static SyncJob CloneJob(SyncJob src) => new()
-    {
-        Id = src.Id,
-        Name = src.Name,
-        Enabled = src.Enabled,
-        Operation = src.Operation,
-        SourcePath = src.SourcePath,
-        DestinationPath = src.DestinationPath,
-        FilterFilePath = src.FilterFilePath,
-        FilterMode = src.FilterMode,
-        MaxSize = src.MaxSize,
-        BandwidthLimit = src.BandwidthLimit,
-        SkipLinks = src.SkipLinks,
-        FastList = src.FastList,
-        CopyLinks = src.CopyLinks,
-        DryRun = src.DryRun,
-        LogFilePath = src.LogFilePath,
-        ExtraFlags = src.ExtraFlags,
-        Strategy = src.Strategy,
-        Schedule = new JobSchedule
-        {
-            IsScheduled = src.Schedule.IsScheduled,
-            ScheduleType = src.Schedule.ScheduleType,
-            IntervalMinutes = src.Schedule.IntervalMinutes,
-            DailyTime = src.Schedule.DailyTime,
-            DaysOfWeek = src.Schedule.DaysOfWeek?.ToList() ?? new List<DayOfWeek>(),
-            RetryOnFailure = src.Schedule.RetryOnFailure,
-            MaxRetries = src.Schedule.MaxRetries,
-            RetryDelayMinutes = src.Schedule.RetryDelayMinutes
-        },
-        LastRunAt = src.LastRunAt,
-        NextRunAt = src.NextRunAt,
-        LastStatus = src.LastStatus,
-        LastMessage = src.LastMessage,
-        LastDurationSeconds = src.LastDurationSeconds
-    };
+    private static SyncJob CloneJob(SyncJob src) => src.Clone();
 }
