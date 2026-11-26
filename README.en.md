@@ -20,17 +20,19 @@ Desktop GUI (**WPF**) and background Service (**ASP.NET Core + Windows Service**
 - **Automatic Scheduler (`JobScheduler`)**:
   - Supports `IntervalMinutes`, `DailyAtTime`, `WeeklyDays`, and `OnServiceStart`.
   - Sequential execution queue with configurable retries for transient network/DNS failures (`RetryOnFailure`, `MaxRetries`, `RetryDelayMinutes`).
-- **First-Run Wizard & Granular Reset**:
-  - On first launch (or when importing a portable config), `FirstRunWizardWindow` guides you through: optional import, AES-256 master key creation in Windows Credential Manager, release-locked binary verification/download, remote authentication, and task review.
-  - Dedicated `ResetConfigWindow` to reset settings, clear logs/runtime, rotate/delete the vault key, or erase `rclone.conf` (with `.bak` backup).
+- **First-Run Wizard & Streamlined Reset**:
+  - On first launch (or when importing a portable config), `FirstRunWizardWindow` (`WizardOnboardingService`) guides you through: clean setup or optional `.json` import, release-locked binary verification/download, remote authentication, and task review — without exposing cryptographic plumbing to the user.
+  - Dedicated `ResetConfigWindow` (`ConfigResetService`) to reset settings, clear logs/runtime, and optionally erase `rclone.conf` (with `.bak` backup), automatically discarding and regenerating the disposable local key.
 - **Visual Remotes Manager (`rclone.conf`) with 3 Auth Modes**:
   - Direct bridge to Rclone's **71+ storage providers** (`/config/providers` and `/config/dump`), masking secrets, testing connections (`rclone lsd` + `/operations/about`), and offering an optional `rclone config` terminal.
   - Explicit authentication choice: **Via Browser Link (OAuth)** (with custom Google Drive `client_id` guidance), **Via Manual Token JSON** (with JSON validation and `rclone authorize` shortcut), or **Via Key / Credentials** (S3, SFTP, passwords, or `service_account_file` file picker).
-- **Windows Credential Vault & Portable Export**:
-  - Automatically generates an **AES-256** master key stored in **Windows Credential Manager** (`RcloneManager:MasterKey`) via `advapi32.dll` to protect sensitive local settings at rest (`AES-256-GCM`, `enc:v1:...`).
-  - Exporting creates a portable bundle **without credentials, tokens, or master key** — containing only sanitized tasks and a blueprint of the used services for guided re-authentication by the Wizard on another machine.
+- **Transparent Disposable-Key Protection & Portable Export**:
+  - Silently manages a disposable **AES-256** key in **Windows Credential Manager** (`IMasterKeyStore` / `AesGcmDataProtector`) to protect sensitive local settings at rest (`AES-256-GCM`, `enc:v1:...`), rotating it atomically when completing the Wizard or resetting.
+  - Exporting (`PortableConfigService`) creates a portable bundle **without credentials, tokens, or keys** — containing only sanitized tasks and a blueprint of the used services for guided re-authentication by the Wizard on another machine.
 - **Auto-Download & Release Lock (`RcloneReleaseManager`)**:
   - If `rclone.exe` is missing or does not match the pinned version (default `v1.76.0`), the UI downloads the official `.zip` (`downloads.rclone.org` with GitHub Releases fallback), validates **SHA-256**, extracts it, and verifies `rclone.exe version`.
+- **Background Auto-Update via GitHub Releases (`AppAutoUpdater`)**:
+  - Automatically checks GitHub Releases, downloads the portable `.zip` package silently in the background with **SHA-256** verification, and applies the update on close or reopen while preserving all local settings and logs.
 - **Filter Analyzer & Optimizer (`FilterFileHelper`)**:
   - Detects mixing `--exclude-from` with `+ ` rules (`--filter-from`), invalid inline syntax (`- * [-- max-size ...]`), and *first-match-wins* ordering bugs, sanitizing automatically at runtime and offering permanent cleanup with `.bak` backup.
 - **Classic Menu Bar & About Window**:
@@ -85,7 +87,7 @@ dotnet build RcloneManager.sln -c Release
 
 Then run **[Iniciar-RcloneManager.bat](Iniciar-RcloneManager.bat)** (or launch `src\RcloneManager.UI\bin\Release\net10.0-windows\RcloneManager.UI.exe` directly):
 
-1. On first run, the **First-Run Wizard** generates the AES-256 master key in Windows Credential Manager, optionally imports a previously exported portable config, verifies/downloads the pinned `rclone.exe` (`v1.76.0`, SHA-256), walks you through authenticating remotes (OAuth Link, Token JSON, or Key/Credentials), and lets you review your jobs.
+1. On first run, the **First-Run Wizard** lets you start fresh or import a portable `.json` config, verifies/downloads the pinned `rclone.exe` (`v1.76.0`, SHA-256), walks you through authenticating remotes (OAuth Link, Token JSON, or Key/Credentials), and lets you review your jobs while managing local encryption transparently in the background.
 2. The UI automatically launches `RcloneManager.Service` in the background on `127.0.0.1:5580` and keeps the scheduler running even when minimized or closed.
 
 ---

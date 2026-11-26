@@ -1,47 +1,41 @@
-# Security (Windows Credential Manager), Remotes (3 Modes), Wizard & Portable Export
+# Disposable-Key Security, SOLID Architecture, Remotes (3 Modes) & Wizard
 
 ## Context
 
-To let the desktop UI act as a complete bridge between the user and Rclone without requiring terminal commands or leaking credentials/keys across machines, four integrated pillars were implemented:
+Originally, Step 1 of `FirstRunWizardWindow` exposed a technical AES-256 key card (`Target: RcloneManager:MasterKey`) with a *"Generate New Key"* button, and `ResetConfigWindow` showed a manual checkbox to delete the key from Windows Credential Manager. In addition, `AppConfigStore` combined multiple responsibilities (JSON persistence, field encryption, default config creation, portable export/import, and destructive reset), while `FirstRunWizardWindow.xaml.cs` and `MainWindow.xaml.cs` coupled directly to static cryptographic helpers and engine internals.
 
-1. **AES-256-GCM Vault backed by Windows Credential Manager** (`WindowsCredentialVault` + `SensitiveDataProtector`).
-2. **Visual Remotes Manager (`rclone.conf`) with 3 authentication modes** (OAuth Link, Manual Token JSON, and Key/Credentials).
-3. **Portable export without credentials or master key** (`ExportedConfigBundle`).
-4. **First-Run Wizard (`FirstRunWizardWindow`) and Granular Reset (`ResetConfigWindow`)**.
+Beyond UX noise, rotating the key as soon as the Wizard opened (`Loaded`) risked orphaning existing `enc:v1:...` fields on disk if the user closed the dialog without saving.
 
 ---
 
 ## Changes Implemented
 
-### 1. AES-256-GCM Vault (`src/RcloneManager.Core/Security/`)
-- **`WindowsCredentialVault.cs`**:
-  - Uses native P/Invoke on `advapi32.dll` (`CredReadW`, `CredWriteW`, `CredDeleteW`, `CredFree`) with `CRED_TYPE_GENERIC` and `CRED_PERSIST_LOCAL_MACHINE`.
-  - On startup, `GetOrCreateMasterKey` automatically generates a 32-byte key (`RandomNumberGenerator.GetBytes(32)`) under `RcloneManager:MasterKey` if none exists.
-  - `RegenerateMasterKey` and `DeleteMasterKey` support key rotation and deletion.
-- **`SensitiveDataProtector.cs`**:
-  - Authenticated encryption with **AES-256-GCM** (`new AesGcm(key, 16)`) using a random 12-byte nonce and 16-byte tag, stored with prefix `enc:v1:`.
-- **`AppConfigStore.cs`**:
-  - When saving `rclone_manager_config.json`, encrypts `RcloneConfigPath`, `ProtectedSecrets`, and `job.ExtraFlags` at rest, decrypting transparently in memory upon load.
+### 1. Decoupled Security Module & Disposable Key (`src/RcloneManager.Core/Security/`)
+- **`IMasterKeyStore.cs` & `WindowsCredentialVault.cs` (`WindowsCredentialMasterKeyStore`)**:
+  - 32-byte key-store abstraction backed by native Win32 `advapi32.dll` (`CredReadW`, `CredWriteW`, `CredDeleteW`, `CredFree`) plus an `InMemoryMasterKeyStore` implementation for OS-independent automated tests.
+- **`ISensitiveDataProtector.cs` & `SensitiveDataProtector.cs` (`AesGcmDataProtector`)**:
+  - Injectable **AES-256-GCM** (`enc:v1:`) authenticated encryption service while preserving backwards-compatible static facades.
+- **`Models/ConfigCloningExtensions.cs`**:
+  - Centralizes `.Clone()` for `JobSchedule`, `SyncJob`, and `AppManagerConfig`, removing duplicated cloning code across scheduler, storage, and exporter.
 
-### 2. Visual Remotes Manager (`rclone.conf`) & 3 Authentication Modes
-- **Models (`Models/RcloneRemoteModels.cs`)**: `RemoteAuthMode` (`OAuthBrowserLink`, `ManualTokenJson`, `KeyOrCredentials`), `RcloneProviderInfo`, `RcloneRemoteDetail` (masks secrets as `"••••••••"`).
-- **Hybrid Engine (`RcloneHybridEngine.cs` + `RcloneRcClient.cs`)**:
-  - Dynamically loads all **71 providers** via `/config/providers` (with `rclone config providers` fallback).
-  - **Via Link (`OAuthBrowserLink`)**: opens browser login automatically via `rclone config create` / `rclone config reconnect`; for Google Drive (`drive`), shows contextual guidance on configuring your own `client_id` + `client_secret`.
-  - **Via Manual Token JSON (`ManualTokenJson`)**: validates JSON syntax before saving and includes a **Generate Token via `rclone authorize`** helper button.
-  - **Via Key / Credentials (`KeyOrCredentials`)**: saves via RC `/config/create` or `/config/update` with `--obscure` without launching a browser; file options (`service_account_file`, `key_file`, certificates) automatically display a **Browse...** picker in the **Remotes (`rclone.conf`)** tab.
+### 2. SOLID Storage Decomposition (`src/RcloneManager.Core/Storage/`)
+- **`IAppConfigServices.cs`**: defines segregated contracts (`IConfigCryptoTransformer`, `IDefaultConfigFactory`, `IPortableConfigService`, `IConfigResetService`, and `IAppConfigRepository`).
+- **`ConfigCryptoTransformer.cs`**:
+  - Detects sensitive fields (`HasSensitiveData`), initializes the key silently on demand, and performs **atomic disposable-key rotation** (`ProtectForStorage(config, rotateDisposableKey: true)`) at `Save()` time so cancelling intermediate dialogs never orphans ciphertext on disk.
+- **`DefaultConfigFactory.cs`**: isolates default configuration creation, workspace path resolution, and `rclone.conf` detection.
+- **`PortableConfigService.cs`**: isolates `ExportedConfigBundle` export/import, CLI flag sanitization (`pass`, `secret`, `token`, `key`, `auth`, `header`), and `ExportedRemoteBlueprint` inference, guaranteeing zero secrets or keys leave the machine.
+- **`ConfigResetService.cs`**: isolates workspace reset and automatically discards/regenerates the disposable key by default (`ResetConfigRequest.DeleteCredentialKey = true`).
+- **`AppConfigStore.cs`**: streamlined into a focused atomic JSON repository (`rclone_manager_config.json`) composing the services above.
 
-### 3. Portable Export + Wizard-Guided Import
-- **`AppConfigStore.ExportPortableConfig`**:
-  - Exports a `.json` file (`Format = "RcloneManager.PortableConfig"`) containing the pinned release, ports/settings, sanitized jobs (`SanitizeExtraFlags` strips flags containing `pass`, `secret`, `token`, `key`, `auth`, `header`), and `ExportedRemoteBlueprint` (only remote name, provider type, suggested auth mode, and non-sensitive options like `scope`, `host`, `port`, `endpoint`, `region`, `url`, `provider`).
-  - **Never exports** `RcloneManager:MasterKey`, `ProtectedSecrets`, `RcloneConfigPath`, OAuth tokens, or passwords.
-- **`FirstRunWizardWindow.xaml` / `.cs`** (4 steps):
-  1. **Optional Import + New Key**: imports a portable `.json` bundle, generates/rotates a fresh AES-256 key in Windows Credential Manager, and previews jobs and required services.
-  2. **Pinned Release**: configures and downloads/validates the locked Rclone release (SHA-256).
-  3. **Authenticate Target Services**: lists imported remotes as `Pending authentication`, pre-fills name/provider/public options, and guides authentication + connection testing one by one.
-  4. **Task Review**: lets you inspect and tweak job names, operations, source, destination, intervals, and enabled flags before saving and reloading the service (`POST /api/service/reload`).
-- **`ResetConfigWindow.xaml` / `.cs`** (`POST /api/service/reset`):
-  - Resets `rclone_manager_config.json` with granular toggles for clearing logs/runtime, deleting `RcloneManager:MasterKey` from Windows Credential Manager, and (with extra confirmation + `.bak` backup) deleting `rclone.conf`.
+### 3. Wizard Decoupling, Remote Builder & Dependency Injection (`Onboarding`, `Service`, and `UI`)
+- **`Onboarding/RemoteAuthRequestBuilder.cs`**: pure domain builder mapping `WizardRemoteAuthInput` + `ExportedRemoteBlueprint` into `CreateOrUpdateRemoteRequest` (including provider-specific parameter names for `s3`, `drive`, and `webdav`).
+- **`UI/Services/WizardOnboardingService.cs` (`IWizardOnboardingService`)**:
+  - Orchestrates onboarding state, in-memory bundle import, release verification, remote listing/authentication (preferring `ServiceApiClient` with local `RcloneHybridEngine` fallback), and completion via `Save(CurrentConfig, rotateDisposableKey: true)`.
+- **`FirstRunWizardWindow.xaml` / `.cs` & `ResetConfigWindow.xaml` / `.cs`**:
+  - Removed the AES-256 key card and *"Generate New Key"* button from Wizard Step 1 (now **"1. Start & Import"**) and removed the technical `MasterKey` checkbox from Reset.
+  - Eliminated direct UI coupling (`MainWindow` and `FirstRunWizardWindow`) to `RcloneManager.Core.Security`.
+- **`Service/Program.cs` & `Scheduling/JobScheduler.cs`**:
+  - Registered all segregated interfaces in ASP.NET Core DI (`IMasterKeyStore`, `ISensitiveDataProtector`, `IConfigCryptoTransformer`, `IDefaultConfigFactory`, `IPortableConfigService`, `IAppConfigRepository`, `IConfigResetService`).
 
 ---
 
@@ -51,19 +45,18 @@ To let the desktop UI act as a complete bridge between the user and Rclone witho
    ```powershell
    dotnet build c:\rclone\RcloneManager.sln -c Release
    ```
-   Observed output: `Build succeeded. 0 Warning(s), 0 Error(s)`.
-2. **Automated Vault & Portable Export tests (`.NET 10`)**:
-   - `WindowsCredentialVault` + `SensitiveDataProtector`: `KeyCreated=True`, `Exists=True`, `PrefixOk=True`, `TamperDetected=True`, `KeyRotated=True`, `AfterDeleteExists=False`.
-   - `AppConfigStore.ExportPortableConfig` + `ReadPortableBundle`: `NoSecretsLeaked=True` (confirmed tokens, `client_secret`, `ProtectedSecrets`, `--sftp-pass`, `enc:v1:`, `MasterKey`, and `rcloneConfigPath` are excluded from the exported JSON), `HasBlueprintAndSafeFlags=True`, `BundleLoadedOk=True`.
-3. **E2E Service API tests (`RcloneManager.Service.exe`)**:
-   - `GET /api/status`: `encryptionKeyActive: true`, `encryptionKeyTarget: "RcloneManager:MasterKey"`, `rcDaemonRunning: true`.
-   - `GET /api/remotes/providers`: `71` providers via `RC API (port 5572)`.
-   - `POST /api/remotes/save`: `InvalidManualTokenRejected=True` for malformed JSON in `ManualTokenJson` mode, plus clean create/test/delete via `KeyOrCredentials` and RC API.
-   - `POST /api/service/reload`: `Reloaded: True`.
+   Observed output: `Compilação com êxito. 0 Aviso(s), 0 Erro(s)`.
+2. **Automated decoupled module verification (`InMemoryMasterKeyStore` + `AesGcmDataProtector` + `AppConfigStore` + `WizardOnboardingService` + `RemoteAuthRequestBuilder`)**:
+   - Automatic key creation on persisting sensitive data and `enc:v1:` at-rest encryption.
+   - Wizard cancel safety: opening `WizardOnboardingService` and importing a bundle in memory does **not** rotate the key or invalidate `rclone_manager_config.json` before `CompleteAsync`.
+   - Atomic disposable-key rotation on `CompleteAsync` and automatic discard/regeneration on `ResetConfig()`, preserving clean decryption with the rotated key.
+   - Portable export (`PortableConfigService.ExportPortableBundle`) verified free of `ProtectedSecrets`, CLI password flags, and `enc:v1:` ciphertext.
+   - `RemoteAuthRequestBuilder.Build` verified for `s3` (`endpoint`, `access_key_id`, `secret_access_key` + public blueprint options).
+   - Observed output: `ALL_SOLID_TESTS_PASSED=True`.
 
 ---
 
 ## Notes / Things to Watch
 
-- `rclone.conf` continues to be managed natively by `rclone.exe` (which obscures passwords via `--obscure` and handles OAuth token refreshes). In the UI, existing secrets returned by `/config/dump` are masked as `"••••••••"` and are left untouched if kept blank during edits.
-- When importing an exported config on another PC, re-authenticating the remotes listed in Wizard Step 3 is both expected and required, since zero secrets leave the source machine.
+- `rclone.conf` remains natively managed by `rclone.exe` (`--obscure` and OAuth token refresh), while `rclone_manager_config.json` protects `RcloneConfigPath`, `ProtectedSecrets`, and `ExtraFlags` using the local disposable key.
+- If `RcloneManager:MasterKey` is deleted externally in Windows, `ConfigCryptoTransformer.UnprotectInPlace` clears only unreadable `enc:v1:` fields without breaking service or UI startup, generating a fresh key automatically on the next save.

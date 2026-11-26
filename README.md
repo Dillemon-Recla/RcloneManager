@@ -20,17 +20,19 @@ Interface Desktop (**WPF**) e Serviço em segundo plano (**ASP.NET Core + Window
 - **Agendador Automático (`JobScheduler`)**:
   - Modos `IntervalMinutes`, `DailyAtTime`, `WeeklyDays` e `OnServiceStart`.
   - Fila sequencial com retentativas configuráveis em caso de falhas transitórias de rede/DNS (`RetryOnFailure`, `MaxRetries`, `RetryDelayMinutes`).
-- **Assistente Inicial (First-Run Wizard) & Reset Granular**:
-  - Na primeira execução (ou ao importar uma configuração), o Wizard (`FirstRunWizardWindow`) conduz: importação opcional, geração de chave AES-256 no Windows Credential Manager, verificação/download da release travada, autenticação dos serviços apontados e revisão das tarefas.
-  - Opção dedicada (`ResetConfigWindow`) para resetar configurações, limpar logs/runtime, rotacionar/excluir a chave do cofre ou apagar `rclone.conf` (com backup `.bak`).
+- **Assistente Inicial (First-Run Wizard) & Reset Simplificado**:
+  - Na primeira execução (ou ao importar uma configuração), o Wizard (`FirstRunWizardWindow` + `WizardOnboardingService`) conduz: início limpo ou importação opcional `.json`, verificação/download da release travada, autenticação dos serviços apontados e revisão das tarefas — sem expor detalhes técnicos de criptografia ao usuário.
+  - Opção dedicada (`ResetConfigWindow` + `ConfigResetService`) para resetar configurações, limpar logs/runtime e opcionalmente apagar `rclone.conf` (com backup `.bak`), descartando e recriando automaticamente a chave local descartável.
 - **Gerenciamento Visual de Remotes (`rclone.conf`) com 3 Modos**:
   - Ponte direta para os **71+ provedores** do Rclone (`/config/providers` e `/config/dump`), com mascaramento de tokens, teste de conexão (`rclone lsd` + `/operations/about`) e terminal opcional `rclone config`.
   - Escolha explícita de autenticação: **Via Link (Navegador / OAuth)** (com orientação de `client_id` próprio no Google Drive), **Via Token JSON Manual** (com validação JSON e botão `rclone authorize`) ou **Via Chave / Credenciais** (S3, SFTP, senha ou `service_account_file` com seletor de arquivo).
-- **Segurança no Cofre do Windows & Exportação Portátil**:
-  - Gera automaticamente uma chave mestra **AES-256** armazenada no **Gerenciador de Credenciais do Windows** (`RcloneManager:MasterKey`) via `advapi32.dll` para proteger dados sensíveis locais em repouso (`AES-256-GCM`, `enc:v1:...`).
-  - A exportação gera um arquivo portátil **sem credenciais, tokens ou chave principal** — contendo apenas tarefas sanitizadas e o blueprint dos serviços utilizados para reautenticação guiada pelo Wizard em outra máquina.
+- **Proteção Transparente com Chave Descartável & Exportação Portátil**:
+  - Gerencia silenciosamente uma chave descartável **AES-256** no **Gerenciador de Credenciais do Windows** (`IMasterKeyStore` / `AesGcmDataProtector`) para cifrar dados sensíveis locais em repouso (`AES-256-GCM`, `enc:v1:...`), rotacionando-a atomicamente ao concluir o Wizard ou resetar.
+  - A exportação (`PortableConfigService`) gera um arquivo portátil **sem credenciais, tokens ou chaves** — contendo apenas tarefas sanitizadas e o blueprint dos serviços utilizados para reautenticação guiada pelo Wizard em outra máquina.
 - **Auto-Download e Trava de Release (`RcloneReleaseManager`)**:
   - Se `rclone.exe` não existir ou divergir da versão travada (padrão `v1.76.0`), a UI baixa o `.zip` oficial (`downloads.rclone.org` com fallback para GitHub Releases), valida o hash **SHA-256**, extrai e confirma a versão executando `rclone.exe version`.
+- **Auto-Update em 2º Plano via GitHub Releases (`AppAutoUpdater`)**:
+  - Consulta automaticamente novas releases estáveis no GitHub, baixa o pacote `.zip` portátil em segundo plano validando o hash **SHA-256** e aplica a atualização ao fechar ou reabrir o aplicativo, preservando todas as configurações e logs locais.
 - **Analisador e Otimizador de Filtros (`FilterFileHelper`)**:
   - Detecta mistura de `--exclude-from` com regras `+ ` (`--filter-from`), sintaxe inline inválida (`- * [-- max-size ...]`) e problemas de precedência (*first-match-wins*), sanitizando automaticamente em tempo de execução e oferecendo correção definitiva com backup `.bak`.
 - **Menus Clássicos & Janela Sobre**:
@@ -85,7 +87,7 @@ dotnet build RcloneManager.sln -c Release
 
 Em seguida, execute **[Iniciar-RcloneManager.bat](Iniciar-RcloneManager.bat)** (ou abra diretamente `src\RcloneManager.UI\bin\Release\net10.0-windows\RcloneManager.UI.exe`):
 
-1. Na primeira execução, o **Assistente Inicial (Wizard)** gera a chave AES-256 no Gerenciador de Credenciais do Windows, permite importar uma configuração exportada anteriormente (opcional), verifica/baixa o `rclone.exe` travado (`v1.76.0`, SHA-256), conduz a autenticação dos remotes (via Link OAuth, Token JSON ou Chave/Credenciais) e exibe a revisão das tarefas.
+1. Na primeira execução, o **Assistente Inicial (Wizard)** permite começar do zero ou importar uma configuração portátil (`.json`), verifica/baixa o `rclone.exe` travado (`v1.76.0`, SHA-256), conduz a autenticação dos remotes (via Link OAuth, Token JSON ou Chave/Credenciais) e exibe a revisão das tarefas, gerenciando a criptografia local automaticamente em segundo plano.
 2. A UI inicia automaticamente o `RcloneManager.Service` em segundo plano na porta `127.0.0.1:5580` e mantém o agendador ativo mesmo ao minimizar ou fechar a janela.
 
 ---
