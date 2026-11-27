@@ -22,16 +22,21 @@ Run `Iniciar-RcloneManager.bat` at the repository root. The script builds `Relea
 
 ---
 
-## Background Execution Modes
+## Background Execution Modes (Wizard Step 4 Selector)
 
-### 1. Silent User-Session Mode (`--background`) — Default
-- Launched automatically by the UI when `http://127.0.0.1:5580` does not respond.
-- Can be configured to start at user logon by enabling **"Start Service automatically with Windows (HKCU\...\Run)"** in the **Logs & Service** tab (creates `RcloneManagerService` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
-- Advantage: runs inside your user session, inheriting access to your profile and `%AppData%\rclone\rclone.conf`.
+In Step 4 of the **First-Run Wizard** (as well as the **Logs & Service** tab), users explicitly choose among three clearly explained modes:
 
-### 2. Native Windows Service (`--windows-service`)
-- Registered via **Install WinService** / **Remove WinService** in the **Logs & Service** tab (or from an elevated prompt: `RcloneManager.Service.exe --install-service --workdir "c:\rclone"`).
-- **Important**: Windows Services run as `LocalSystem` by default (which has a different `%AppData%` than your user profile). For this reason, `AppConfigStore` persists `rcloneConfigPath` explicitly in `rclone_manager_config.json`, and `RcloneCliRunner` / `RcloneHybridEngine` pass `--config "<path>"` to `rclone.exe`.
+### 1. Silent User-Session Mode (`UserStartup` / `--background`) — Recommended Default
+- Launched automatically by the UI when `http://127.0.0.1:5580` does not respond and registered under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (`RcloneManagerService`).
+- **Advantage**: requires no Administrator elevation (UAC) and runs inside your user session with direct access to your profile and `%AppData%\rclone\rclone.conf`.
+
+### 2. Native Windows Service (`WindowsService` / `--windows-service`)
+- Selectable directly in **Wizard Step 4** or via **Install WinService** / **Remove WinService** in **Logs & Service** (prompts UAC once).
+- The installer frees port `5580` from any local session process, creates/updates the service with `start= auto` + auto-recovery (`sc failure`), and immediately starts `RcloneManagerService` (`sc start`).
+- **`LocalSystem` compatibility**: `AppConfigStore` persists `rcloneConfigPath` explicitly and `WindowsCredentialMasterKeyStore` maintains a machine-scoped DPAPI mirror in `%ProgramData%\RcloneManager\vault_*.dpapi`, allowing `LocalSystem` to decrypt `rclone_manager_config.json` cleanly.
+
+### 3. Manual Only (`ManualOnly`)
+- Runs the background service only when the application is opened manually, with no automatic Windows startup entry.
 
 ---
 

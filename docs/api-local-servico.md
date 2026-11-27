@@ -22,6 +22,8 @@ O projeto `RcloneManager.Service` atua como daemon de controle e agendamento des
 | `DELETE` | `/api/jobs/{id}` | Remove uma tarefa pelo `id`. |
 | `POST` | `/api/jobs/{id}/run?dryRun=false` | Enfileira execução manual; aceita corpo opcional `RunJobRequest` (`dryRun`, `overrideStrategy`). |
 | `POST` | `/api/jobs/{id}/stop` | Solicita cancelamento da tarefa em execução. |
+| `GET` | `/api/jobs/{id}/excluded-retention?scan=false\|true` | Retorna `ExcludedRetentionStatusDto` com a contagem e pastas em carência de exclusão (30 dias por padrão); com `scan=true`, inspeciona o destino ao vivo via `--fast-list` e remove itens vencidos. |
+| `POST` | `/api/jobs/{id}/purge-excluded` | Expurga imediatamente do destino todos os arquivos hoje bloqueados pelo filtro da tarefa (`PurgeExcludedResultDto`). |
 
 ### Controle Híbrido RC, Banda e Release
 | Método | Rota | Descrição |
@@ -45,7 +47,8 @@ O projeto `RcloneManager.Service` atua como daemon de controle e agendamento des
 | `GET` | `/api/filters/analyze?path=...` | Analisa o arquivo de filtros (`exclude_user_folder.txt` por padrão) e retorna `FilterAnalysisResult` + conteúdo atual. |
 | `POST` | `/api/filters/save` | Salva conteúdo editado em `FilterFilePayload` e retorna nova análise. |
 | `POST` | `/api/filters/optimize` | Cria backup `.bak`, reordena e corrige as regras no disco via `FilterFileHelper.ApplyOptimizationWithBackup`. |
-| `POST` | `/api/service/startup?enabled=true\|false` | Cria ou remove a entrada `RcloneManagerService` em `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. |
+| `POST` | `/api/service/startup?enabled=true\|false` | Cria ou remove a entrada `RcloneManagerService` em `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` e sincroniza `preferredServiceMode`. |
+| `POST` | `/api/service/mode?mode=UserStartup\|WindowsService\|ManualOnly` | Define o modo preferencial de execução em 2º plano (`BackgroundServiceMode`) e ajusta a chave de inicialização do usuário. |
 | `POST` | `/api/service/complete-first-run` | Marca `firstRunCompleted = true` na configuração persistida. |
 | `POST` | `/api/service/reload` | Para o `rcd` se ativo, recarrega `JobScheduler` do disco (`rclone_manager_config.json`) e reinicia o `rcd`. |
 | `POST` | `/api/service/reset` | Aceita `ResetConfigRequest` (`deleteCredentialKey`, `deleteLogsAndRuntime`, `deleteRcloneConf`), limpa conforme escolhido e reinicia o config. |
@@ -58,7 +61,7 @@ O projeto `RcloneManager.Service` atua como daemon de controle e agendamento des
 - `--workdir <caminho>`: define explicitamente o diretório raiz onde residem `rclone_manager_config.json` e logs.
 - `--background`: suprime os provedores de log de console para execução silenciosa em 2º plano.
 - `--windows-service`: ativa o `WindowsServiceHost` (dispatcher nativo `StartServiceCtrlDispatcherW` / `RegisterServiceCtrlHandlerExW` / `SetServiceStatus` em `advapi32.dll`).
-- `--install-service`: executa `sc.exe create RcloneManagerService ... start= auto` apontando para `--windows-service --workdir "<root>"`.
+- `--install-service`: cria ou atualiza `RcloneManagerService` (`sc.exe create` / `sc.exe config`), define política de auto-recuperação (`sc.exe failure`) e inicia o serviço imediatamente (`sc.exe start`).
 - `--uninstall-service`: executa `sc.exe stop` e `sc.exe delete RcloneManagerService`.
 
 ---

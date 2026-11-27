@@ -25,7 +25,9 @@ Implemented in `src/RcloneManager.Core/Engine/FilterFileHelper.cs`:
   - At runtime, if the original file still contains warnings incompatible with `--filter-from`, the engine **keeps the original file untouched** and generates a sanitized copy under `.rclone-manager-runtime\<name>.sanitized.filter` (logging the adjustment in the service log).
   - When a job's `MaxSize` is empty and the filter file had `[-- max-size 50M]`, `RcloneCliRunner` automatically supplies `--max-size 50M` on the command line.
 - **`ApplyOptimizationWithBackup(string filePath)`**:
-  - Available in the **Filters & Optimizer** tab (and via `POST /api/filters/optimize`): creates a `.bak` backup (or `.yyyyMMdd_HHmmss.bak` if `.bak` already exists) and writes priority exclusions before `+` rules, replacing `- * [-- max-size ...]` with `- *`.
+  - Available in the **Filters & Optimizer** tab (and via `POST /api/filters/optimize`): creates a `.bak` backup (or `.yyyyMMdd_HHmmss.bak` if `.bak` already exists) and writes priority exclusions before `+` rules, replacing `- * [-- max-size ...]` with `- *` and automatically expanding `- **/.*/**` to include root `- .*/**` and `- .*`.
+- **`BuildInvertedExcludedOnlyFilterContent(string filePath, FilterRuleMode mode)`**:
+  - Builds the exact *First-Match-Wins* boolean complement filter used by `ExcludedRetentionManager` for the **30-day grace retention** of previously uploaded items added to exclusions and for the **🗑 Purge Now** button in the **Filters & Optimizer** tab.
 
 ---
 

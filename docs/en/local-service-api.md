@@ -22,6 +22,8 @@
 | `DELETE` | `/api/jobs/{id}` | Deletes a job by `id`. |
 | `POST` | `/api/jobs/{id}/run?dryRun=false` | Enqueues a manual execution; accepts optional `RunJobRequest` body (`dryRun`, `overrideStrategy`). |
 | `POST` | `/api/jobs/{id}/stop` | Requests cancellation of the currently running job. |
+| `GET` | `/api/jobs/{id}/excluded-retention?scan=false\|true` | Returns `ExcludedRetentionStatusDto` with counts and folders in the excluded grace window (30 days default); `scan=true` inspects the destination live via `--fast-list` and purges expired items. |
+| `POST` | `/api/jobs/{id}/purge-excluded` | Immediately purges all destination files currently excluded by the job's filter (`PurgeExcludedResultDto`). |
 
 ### Hybrid RC Control, Remotes, Bandwidth & Release
 | Method | Route | Description |
@@ -45,7 +47,8 @@
 | `GET` | `/api/filters/analyze?path=...` | Analyzes a filter file (defaults to `exclude_user_folder.txt`) and returns `FilterAnalysisResult` + current content. |
 | `POST` | `/api/filters/save` | Saves edited content from `FilterFilePayload` and returns updated analysis. |
 | `POST` | `/api/filters/optimize` | Creates a `.bak` backup, reorders, and fixes rules on disk via `FilterFileHelper.ApplyOptimizationWithBackup`. |
-| `POST` | `/api/service/startup?enabled=true\|false` | Creates or removes the `RcloneManagerService` entry in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. |
+| `POST` | `/api/service/startup?enabled=true\|false` | Creates or removes the `RcloneManagerService` entry in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` and updates `preferredServiceMode`. |
+| `POST` | `/api/service/mode?mode=UserStartup\|WindowsService\|ManualOnly` | Updates the preferred background execution mode (`BackgroundServiceMode`) and user startup registry entry. |
 | `POST` | `/api/service/complete-first-run` | Marks `firstRunCompleted = true` in persisted configuration. |
 | `POST` | `/api/service/reload` | Stops `rcd` if running, reloads `JobScheduler` from disk (`rclone_manager_config.json`), and restarts `rcd`. |
 | `POST` | `/api/service/reset` | Accepts `ResetConfigRequest` (`deleteCredentialKey`, `deleteLogsAndRuntime`, `deleteRcloneConf`), clears selected items, and reinitializes config. |
@@ -58,7 +61,7 @@
 - `--workdir <path>`: explicitly sets the root directory where `rclone_manager_config.json` and logs reside.
 - `--background`: suppresses console log providers for silent background execution.
 - `--windows-service`: enables `WindowsServiceHost` (native `StartServiceCtrlDispatcherW` / `RegisterServiceCtrlHandlerExW` / `SetServiceStatus` dispatcher in `advapi32.dll`).
-- `--install-service`: executes `sc.exe create RcloneManagerService ... start= auto` pointing to `--windows-service --workdir "<root>"`.
+- `--install-service`: creates or updates `RcloneManagerService` (`sc.exe create` / `sc.exe config`), sets automatic failure recovery (`sc.exe failure`), and starts the service immediately (`sc.exe start`).
 - `--uninstall-service`: runs `sc.exe stop` and `sc.exe delete RcloneManagerService`.
 
 ---

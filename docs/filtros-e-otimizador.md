@@ -25,7 +25,9 @@ Implementado em `src/RcloneManager.Core/Engine/FilterFileHelper.cs`:
   - Em tempo de execução, se o arquivo original ainda possuir alertas incompatíveis com `--filter-from`, o motor **preserva o arquivo original intacto** e gera uma cópia sanitizada em `.rclone-manager-runtime\<nome>.sanitized.filter` (registrando o ajuste no log do serviço).
   - Quando a tarefa está com `MaxSize` vazio e o arquivo possuía `[-- max-size 50M]`, `RcloneCliRunner` aplica `--max-size 50M` na linha de comando.
 - **`ApplyOptimizationWithBackup(string filePath)`**:
-  - Disponível na aba **Filtros & Otimizador** da UI (e via `POST /api/filters/optimize`): cria um backup `.bak` (ou `.yyyyMMdd_HHmmss.bak` se `.bak` já existir) e grava as exclusões prioritárias antes das regras `+`, substituindo `- * [-- max-size ...]` por `- *`.
+  - Disponível na aba **Filtros & Otimizador** da UI (e via `POST /api/filters/optimize`): cria um backup `.bak` (ou `.yyyyMMdd_HHmmss.bak` se `.bak` já existir) e grava as exclusões prioritárias antes das regras `+`, substituindo `- * [-- max-size ...]` por `- *` e expandindo automaticamente `- **/.*/**` para incluir `- .*/**` e `- .*` na raiz.
+- **`BuildInvertedExcludedOnlyFilterContent(string filePath, FilterRuleMode mode)`**:
+  - Gera o filtro complementar exato (*First-Match-Wins*) usado pelo `ExcludedRetentionManager` para rastrear a **carência de 30 dias** de itens já enviados que entraram depois na exclusão e pelo botão **🗑 Expurgar na Hora** na aba **Filtros & Otimizador**.
 
 ---
 

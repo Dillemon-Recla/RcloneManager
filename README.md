@@ -1,6 +1,12 @@
-# RcloneManager
+<p align="center">
+  <img src="docs/assets/logo.png" alt="RcloneManager Logo" width="180" />
+</p>
 
-> 🇧🇷 **Português** | 🇺🇸 [English](README.en.md)
+<h1 align="center">RcloneManager</h1>
+
+<p align="center">
+  🇧🇷 <strong>Português</strong> | 🇺🇸 <a href="README.en.md">English</a>
+</p>
 
 Interface Desktop (**WPF**) e Serviço em segundo plano (**ASP.NET Core + Windows Service**) em **.NET 10** para controlar o [Rclone](https://rclone.org/) no Windows com motor híbrido (**API HTTP RC + CLI**), agendador automático de tarefas, telemetria de transferências ao vivo, otimizador de filtros e provisionamento automático com trava de release (**SHA-256**).
 
@@ -21,7 +27,7 @@ Interface Desktop (**WPF**) e Serviço em segundo plano (**ASP.NET Core + Window
   - Modos `IntervalMinutes`, `DailyAtTime`, `WeeklyDays` e `OnServiceStart`.
   - Fila sequencial com retentativas configuráveis em caso de falhas transitórias de rede/DNS (`RetryOnFailure`, `MaxRetries`, `RetryDelayMinutes`).
 - **Assistente Inicial (First-Run Wizard) & Reset Simplificado**:
-  - Na primeira execução (ou ao importar uma configuração), o Wizard (`FirstRunWizardWindow` + `WizardOnboardingService`) conduz: início limpo ou importação opcional `.json`, verificação/download da release travada, autenticação dos serviços apontados e revisão das tarefas — sem expor detalhes técnicos de criptografia ao usuário.
+  - Na primeira execução (ou ao importar uma configuração), o Wizard (`FirstRunWizardWindow` + `WizardOnboardingService`) conduz: início limpo ou importação opcional `.json`, verificação/download da release travada, autenticação dos serviços apontados, revisão das tarefas e **escolha clara do modo do serviço em 2º plano** (*Sessão do Usuário sem Admin*, *Serviço Nativo do Windows `WinService`* ou *Somente Manual*).
   - Opção dedicada (`ResetConfigWindow` + `ConfigResetService`) para resetar configurações, limpar logs/runtime e opcionalmente apagar `rclone.conf` (com backup `.bak`), descartando e recriando automaticamente a chave local descartável.
 - **Gerenciamento Visual de Remotes (`rclone.conf`) com 3 Modos**:
   - Ponte direta para os **71+ provedores** do Rclone (`/config/providers` e `/config/dump`), com mascaramento de tokens, teste de conexão (`rclone lsd` + `/operations/about`) e terminal opcional `rclone config`.
@@ -33,8 +39,9 @@ Interface Desktop (**WPF**) e Serviço em segundo plano (**ASP.NET Core + Window
   - Se `rclone.exe` não existir ou divergir da versão travada (padrão `v1.76.0`), a UI baixa o `.zip` oficial (`downloads.rclone.org` com fallback para GitHub Releases), valida o hash **SHA-256**, extrai e confirma a versão executando `rclone.exe version`.
 - **Auto-Update em 2º Plano via GitHub Releases (`AppAutoUpdater`)**:
   - Consulta automaticamente novas releases estáveis no GitHub, baixa o pacote `.zip` portátil em segundo plano validando o hash **SHA-256** e aplica a atualização ao fechar ou reabrir o aplicativo, preservando todas as configurações e logs locais.
-- **Analisador e Otimizador de Filtros (`FilterFileHelper`)**:
-  - Detecta mistura de `--exclude-from` com regras `+ ` (`--filter-from`), sintaxe inline inválida (`- * [-- max-size ...]`) e problemas de precedência (*first-match-wins*), sanitizando automaticamente em tempo de execução e oferecendo correção definitiva com backup `.bak`.
+- **Analisador de Filtros, Carência de 30 Dias e Expurgo Imediato (`FilterFileHelper` + `ExcludedRetentionManager`)**:
+  - Detecta mistura de `--exclude-from` com regras `+ ` (`--filter-from`), sintaxe inline inválida (`- * [-- max-size ...]`), pastas ocultas na raiz (`- .*/**`) e problemas de precedência (*first-match-wins*), sanitizando automaticamente em tempo de execução e oferecendo correção definitiva com backup `.bak`.
+  - Arquivos já presentes na nuvem que entrarem depois na lista de exclusão recebem **30 dias de carência** (rastreados localmente sem mover arquivos na nuvem) antes da remoção automática, além de botão **🗑 Expurgar na Hora** para limpeza imediata sob demanda.
 - **Menus Clássicos & Janela Sobre**:
   - Barra de menus **Arquivo** e **Ajuda** (atalhos `Ctrl+N` / `Ctrl+S`, exportação/importação, diagnóstico e janela **Sobre** com tecnologias e licença MIT).
 - **Zero dependências NuGet externas**: construído apenas com os frameworks nativos do SDK **.NET 10** (`net10.0` / `net10.0-windows`).
@@ -60,7 +67,8 @@ flowchart LR
 RcloneManager.sln
 ├── Iniciar-RcloneManager.bat               # Lançador rápido (compila em Release se necessário e abre a UI)
 ├── LICENSE                                 # Licença MIT
-├── docs/                                   # Documentação técnica detalhada
+├── assets/blender/                         # Projeto 3D (.blend) e scripts Python de renderização/ícones
+├── docs/                                   # Documentação técnica, GitHub Pages e ícones (docs/assets/)
 └── src/
     ├── RcloneManager.Core/                 # Modelos, Motor Híbrido, Agendador, Cofre AES-256, Filtros e Release Manager
     ├── RcloneManager.Service/              # Serviço em 2º plano, API HTTP (:5580) e dispatcher Windows Service
@@ -99,6 +107,7 @@ Em seguida, execute **[Iniciar-RcloneManager.bat](Iniciar-RcloneManager.bat)** (
 - [Segurança, Remotes (3 Modos), Wizard e Exportação Portátil](docs/seguranca-remotes-e-wizard.md)
 - [Provisionamento Automático e Trava de Release](docs/provisionamento-e-trava-release.md)
 - [Regras de Filtro e Otimizador](docs/filtros-e-otimizador.md)
+- [Carência de 30 Dias para Excluídos, Expurgo e Desempenho no Drive](docs/carencia-excluidos-e-desempenho-drive.md)
 - [Operação, Serviço Windows e Solução de Problemas](docs/operacao-e-servico-windows.md)
 
 ---
