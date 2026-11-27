@@ -8,6 +8,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>RcloneManager.UI</AssemblyName>
+    <ApplicationIcon>..\..\docs\assets\icons\rclone_manager.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,8 @@
 
   <ItemGroup>
     <Resource Include="..\..\docs\assets\pix-qrcode.png" Link="Assets\pix-qrcode.png" />
+    <Resource Include="..\..\docs\assets\icons\rclone_manager.ico" Link="Assets\rclone_manager.ico" />
+    <Resource Include="..\..\docs\assets\icons\png\icon-256x256.png" Link="Assets\icon-256x256.png" />
   </ItemGroup>
 
 </Project>

@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>RcloneManager.Service</AssemblyName>
+    <ApplicationIcon>..\..\docs\assets\icons\rclone_manager.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

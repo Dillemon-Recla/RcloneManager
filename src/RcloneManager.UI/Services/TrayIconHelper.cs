@@ -19,7 +19,7 @@ public sealed class TrayIconHelper : IDisposable
         Action onExitUiOnly,
         Action onExitAll)
     {
-        _generatedIcon = CreateCloudIcon();
+        _generatedIcon = LoadAppTrayIcon();
 
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add("Abrir Painel RcloneManager", null, (_, _) => onOpenWindow());
@@ -51,6 +51,28 @@ public sealed class TrayIconHelper : IDisposable
     public void ShowBalloon(string title, string message, WinForms.ToolTipIcon icon = WinForms.ToolTipIcon.Info)
     {
         _notifyIcon.ShowBalloonTip(3500, title, message, icon);
+    }
+
+    private static Drawing.Icon LoadAppTrayIcon()
+    {
+        try
+        {
+            var res = System.Windows.Application.GetResourceStream(
+                new Uri("pack://application:,,,/Assets/rclone_manager.ico"));
+            if (res?.Stream is not null)
+            {
+                using (res.Stream)
+                {
+                    return new Drawing.Icon(res.Stream, WinForms.SystemInformation.SmallIconSize);
+                }
+            }
+        }
+        catch
+        {
+            // Fallback seguro caso o stream de recurso não esteja disponível
+        }
+
+        return CreateCloudIcon();
     }
 
     private static Drawing.Icon CreateCloudIcon()

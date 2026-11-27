@@ -94,6 +94,13 @@ code {
   text-decoration: none;
 }
 
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(56, 189, 248, 0.35));
+}
+
 .brand-badge {
   font-size: 0.68rem;
   font-weight: 700;
@@ -240,6 +247,28 @@ code {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1.15rem;
+}
+
+.hero-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  margin-bottom: 1.25rem;
+}
+
+.hero-logo-card {
+  width: 88px;
+  height: 88px;
+  border-radius: 20px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  box-shadow: 0 12px 30px rgba(3, 18, 48, 0.75), 0 0 22px rgba(56, 189, 248, 0.22);
+  flex-shrink: 0;
+}
+
+.titlebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .pill {

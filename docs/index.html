@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RcloneManager — Interface WPF &amp; Serviço Windows (.NET 10) para Rclone</title>
   <meta name="description" content="Interface Desktop (WPF) e Serviço em segundo plano em .NET 10 para controlar o Rclone com motor híbrido (RC API + CLI), agendador, cofre AES-256, 3 modos de autenticação e auto-download SHA-256." />
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%232563eb'/%3E%3Cpath d='M22 42h21a9 9 0 0 0 1-17.9A12 12 0 0 0 21 26a8 8 0 0 0 1 16z' fill='%23ffffff'/%3E%3C/svg%3E" />
+  <link rel="icon" href="favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/png/icon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/png/icon-192x192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/icons/square/apple-touch-icon.png" />
+  <meta property="og:image" content="https://dillemon-recla.github.io/RcloneManager/assets/logo.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,10 +17,7 @@
   <header class="navbar">
     <div class="container navbar-inner">
       <a class="brand" href="#top">
-        <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true">
-          <circle cx="32" cy="32" r="30" fill="#2563eb"/>
-          <path d="M22 42h21a9 9 0 0 0 1-17.9A12 12 0 0 0 21 26a8 8 0 0 0 1 16z" fill="#ffffff"/>
-        </svg>
+        <img src="assets/icons/png/icon-64x64.png" width="32" height="32" alt="RcloneManager" class="brand-logo" />
         <span>RcloneManager</span>
         <span class="brand-badge">.NET 10</span>
       </a>
@@ -45,11 +46,14 @@
     <section class="hero" style="border-top: none;">
       <div class="container hero-grid">
         <div>
-          <div class="pill-row">
-            <span class="pill accent" data-i18n="hero.pill1">.NET 10 (WPF + ASP.NET Core)</span>
-            <span class="pill green" data-i18n="hero.pill2">Zero NuGet Externos</span>
-            <span class="pill" data-i18n="hero.pill3">Rclone v1.76.0 (SHA-256)</span>
-            <span class="pill" data-i18n="hero.pill4">Licença MIT</span>
+          <div class="hero-brand-row">
+            <img src="assets/logo.png" width="88" height="88" alt="Logo 3D RcloneManager" class="hero-logo-card" />
+            <div class="pill-row" style="margin-bottom: 0;">
+              <span class="pill accent" data-i18n="hero.pill1">.NET 10 (WPF + ASP.NET Core)</span>
+              <span class="pill green" data-i18n="hero.pill2">Zero NuGet Externos</span>
+              <span class="pill" data-i18n="hero.pill3">Rclone v1.76.0 (SHA-256)</span>
+              <span class="pill" data-i18n="hero.pill4">Licença MIT</span>
+            </div>
           </div>
 
           <h1 data-i18n-html="hero.title">Controle o <span>Rclone</span> com Interface Visual e Serviço em 2º Plano</h1>
@@ -70,7 +74,10 @@
         <div class="app-window" aria-label="Prévia da interface RcloneManager" data-i18n-aria="mockup.aria">
           <div class="app-titlebar">
             <div class="window-dots"><span></span><span></span><span></span></div>
-            <span data-i18n="mockup.title">RcloneManager — Controle Híbrido, Interface &amp; Serviço</span>
+            <span class="titlebar-brand">
+              <img src="assets/icons/png/icon-32x32.png" width="16" height="16" alt="" />
+              <span data-i18n="mockup.title">RcloneManager — Controle Híbrido, Interface &amp; Serviço</span>
+            </span>
             <span style="color:#10b981;font-weight:700;" data-i18n="mockup.status">● Serviço :5580</span>
           </div>
 
