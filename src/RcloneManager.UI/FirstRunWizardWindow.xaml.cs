@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -8,28 +9,55 @@ using System.Windows.Media;
 using RcloneManager.Core.Engine;
 using RcloneManager.Core.Models;
 using RcloneManager.Core.Onboarding;
+using RcloneManager.Core.Storage;
 using RcloneManager.UI.Services;
 using MediaColor = System.Windows.Media.Color;
 using WinForms = System.Windows.Forms;
 
 namespace RcloneManager.UI;
 
-internal sealed class WizardJobReviewItem
+internal sealed class WizardJobReviewItem : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public SyncJob Job { get; init; } = new();
 
-    public override string ToString()
+    public bool IsEnabled
     {
-        var active = Job.Enabled ? "Ativa" : "Desativada";
-        var opLabel = Job.Operation switch
+        get => Job.Enabled;
+        set
         {
-            RcloneOperation.Sync => "Sincronizar",
-            RcloneOperation.Copy => "Copiar",
-            RcloneOperation.Move => "Mover",
-            RcloneOperation.Check => "Verificar",
-            _ => Job.Operation.ToString()
-        };
-        return $"[{active}] {Job.Name} — {opLabel}: {Job.SourcePath} -> {Job.DestinationPath}";
+            if (Job.Enabled != value)
+            {
+                Job.Enabled = value;
+                NotifyChanged();
+            }
+        }
+    }
+
+    public string TitleText
+    {
+        get
+        {
+            var opLabel = Job.Operation switch
+            {
+                RcloneOperation.Sync => "Sincronizar",
+                RcloneOperation.Copy => "Copiar novidades",
+                RcloneOperation.Move => "Mover",
+                RcloneOperation.Check => "Verificar",
+                _ => Job.Operation.ToString()
+            };
+            return $"{Job.Name} ({opLabel})";
+        }
+    }
+
+    public string RouteText => $"{Job.SourcePath}  →  {Job.DestinationPath}";
+
+    public void NotifyChanged()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TitleText)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RouteText)));
     }
 }
 
@@ -40,6 +68,16 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         None,
         Scratch,
         Import
+    }
+
+    private sealed record WizardDestOption(bool IsLocal, string TargetValue, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private sealed record WizardFrequencyOption(bool IsScheduled, ScheduleType Type, int IntervalMinutes, string Label)
+    {
+        public override string ToString() => Label;
     }
 
     private static readonly Dictionary<string, string> DefaultAliasByProvider = new(StringComparer.OrdinalIgnoreCase)
@@ -70,6 +108,7 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
     private bool _isConnectingProvider;
     private CancellationTokenSource? _authCts;
     private string? _verifiedLocalFolderPath;
+    private string? _lastVerifiedRemoteAlias;
     private IReadOnlyList<RcloneRemoteDetail> _existingRemoteDetails = Array.Empty<RcloneRemoteDetail>();
     private int _selectedJobIndex = -1;
     private bool _isPopulatingJobFields;
@@ -87,7 +126,7 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         _onboarding = onboardingService ?? new WizardOnboardingService(workDir, api);
         _initialImportFilePath = initialImportFilePath;
 
-        WizardJobOpCombo.ItemsSource = UiOption<RcloneOperation>.CreateOperationOptions();
+        InitializeStep4Controls();
         Loaded += FirstRunWizardWindow_Loaded;
     }
 
@@ -95,6 +134,64 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
     {
         if (_isConnectingProvider)
             _authCts?.Cancel();
+    }
+
+    private void InitializeStep4Controls()
+    {
+        var opOptions = UiOption<RcloneOperation>.CreateOperationOptions();
+        ScratchOperationCombo.ItemsSource = opOptions;
+        ScratchOperationCombo.SelectedIndex = 0;
+
+        WizardJobOpCombo.ItemsSource = opOptions;
+        WizardJobOpCombo.SelectedIndex = 0;
+
+        var freqOptions = new[]
+        {
+            new WizardFrequencyOption(true, ScheduleType.IntervalMinutes, 30, "A cada 30 minutos"),
+            new WizardFrequencyOption(true, ScheduleType.IntervalMinutes, 60, "A cada 1 hora"),
+            new WizardFrequencyOption(true, ScheduleType.IntervalMinutes, 120, "A cada 2 horas (Recomendado)"),
+            new WizardFrequencyOption(true, ScheduleType.IntervalMinutes, 240, "A cada 4 horas"),
+            new WizardFrequencyOption(true, ScheduleType.IntervalMinutes, 360, "A cada 6 horas"),
+            new WizardFrequencyOption(true, ScheduleType.DailyAtTime, 1440, "1 vez por dia (às 14:00)"),
+            new WizardFrequencyOption(false, ScheduleType.IntervalMinutes, 120, "Somente manual")
+        };
+
+        ScratchFrequencyCombo.ItemsSource = freqOptions;
+        ScratchFrequencyCombo.SelectedIndex = 2; // 2 horas
+
+        WizardImportFrequencyCombo.ItemsSource = freqOptions;
+        WizardImportFrequencyCombo.SelectedIndex = 2;
+
+        var serviceModeOptions = new[]
+        {
+            new UiOption<BackgroundServiceMode>(
+                BackgroundServiceMode.UserStartup,
+                "Iniciar com meu usuário do Windows (Recomendado — não pede Administrador)"),
+            new UiOption<BackgroundServiceMode>(
+                BackgroundServiceMode.WindowsService,
+                "Instalar Serviço Nativo do Windows (Servidor / antes do login — pede Admin 1 vez)"),
+            new UiOption<BackgroundServiceMode>(
+                BackgroundServiceMode.ManualOnly,
+                "Somente manual (funciona apenas quando eu abrir o RcloneManager)")
+        };
+
+        WizardServiceModeCombo.ItemsSource = serviceModeOptions;
+        WizardServiceModeCombo.SelectedIndex = 0;
+
+        WizardImportServiceModeCombo.ItemsSource = serviceModeOptions;
+        WizardImportServiceModeCombo.SelectedIndex = 0;
+
+        UpdateServiceModeHints();
+
+        // Tooltips mostrando o caminho real de cada caixa de seleção
+        FolderDocsCheck.ToolTip = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        FolderDesktopCheck.ToolTip = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        FolderPicturesCheck.ToolTip = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+        FolderVideosCheck.ToolTip = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+        FolderMusicCheck.ToolTip = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        FolderDownloadsCheck.ToolTip = Path.Combine(userProfile, "Downloads");
+        FolderFullProfileCheck.ToolTip = userProfile;
     }
 
     private async void FirstRunWizardWindow_Loaded(object sender, RoutedEventArgs e)
@@ -143,6 +240,7 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         _hasImportedFile = false;
         _verifiedRemotesByProvider.Clear();
         _verifiedLocalFolderPath = null;
+        _lastVerifiedRemoteAlias = null;
         _onboarding.ResetToCleanStart();
 
         _isInitializingUi = true;
@@ -215,6 +313,7 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
             _hasImportedFile = true;
             _verifiedRemotesByProvider.Clear();
             _verifiedLocalFolderPath = null;
+            _lastVerifiedRemoteAlias = null;
 
             _isInitializingUi = true;
             try
@@ -271,6 +370,279 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         WizardImportConfigButton.Content = _hasImportedFile ? "Trocar Arquivo..." : "Escolher Arquivo...";
     }
 
+    #region Etapa 4 — Caixas de Seleção (Scratch) & Revisão Visual (Import)
+
+    private void RefreshStep4ModeAndTargets()
+    {
+        var isImport = _startMode == WizardStartMode.Import;
+        Step4ScratchPanel.Visibility = isImport ? Visibility.Collapsed : Visibility.Visible;
+        Step4ImportPanel.Visibility = isImport ? Visibility.Visible : Visibility.Collapsed;
+
+        var destOptions = BuildAvailableDestOptions();
+
+        if (!isImport)
+        {
+            ScratchDestTargetCombo.ItemsSource = destOptions;
+            WizardDestOption? preferred = null;
+            if (GetSelectedProviderTag().Equals("local", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(_verifiedLocalFolderPath))
+            {
+                preferred = destOptions.FirstOrDefault(o => o.IsLocal);
+            }
+            else if (!string.IsNullOrWhiteSpace(_lastVerifiedRemoteAlias))
+            {
+                preferred = destOptions.FirstOrDefault(o => !o.IsLocal && o.TargetValue.Equals(_lastVerifiedRemoteAlias, StringComparison.OrdinalIgnoreCase));
+            }
+            ScratchDestTargetCombo.SelectedItem = preferred ?? destOptions.FirstOrDefault();
+            UpdateScratchDestVisibility();
+        }
+        else
+        {
+            WizardImportDestTargetCombo.ItemsSource = destOptions;
+            RefreshJobsReviewListUi(_selectedJobIndex >= 0 ? _selectedJobIndex : 0);
+        }
+    }
+
+    private List<WizardDestOption> BuildAvailableDestOptions()
+    {
+        var list = new List<WizardDestOption>();
+        var addedRemotes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (prov, aliases) in _verifiedRemotesByProvider)
+        {
+            foreach (var alias in aliases)
+            {
+                if (addedRemotes.Add(alias))
+                    list.Add(new WizardDestOption(false, alias, $"☁ Nuvem: {alias} ({prov})"));
+            }
+        }
+
+        foreach (var d in _existingRemoteDetails)
+        {
+            if (addedRemotes.Add(d.Name))
+                list.Add(new WizardDestOption(false, d.Name, $"☁ Nuvem: {d.Name} ({d.Type})"));
+        }
+
+        foreach (var imp in _onboarding.ImportedRemotes)
+        {
+            if (addedRemotes.Add(imp.Blueprint.Name))
+                list.Add(new WizardDestOption(false, imp.Blueprint.Name, $"☁ Nuvem: {imp.Blueprint.Name} ({imp.Blueprint.Type})"));
+        }
+
+        var localBase = !string.IsNullOrWhiteSpace(_verifiedLocalFolderPath)
+            ? _verifiedLocalFolderPath
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "MeusBackups");
+
+        list.Add(new WizardDestOption(true, localBase, $"📁 Pasta Local: {localBase}"));
+        return list;
+    }
+
+    private void ScratchDestTargetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateScratchDestVisibility();
+        UpdateStepGateState();
+    }
+
+    private void UpdateScratchDestVisibility()
+    {
+        if (ScratchSubfolderPanel == null)
+            return;
+
+        var isLocal = (ScratchDestTargetCombo.SelectedItem as WizardDestOption)?.IsLocal == true;
+        ScratchSubfolderPanel.Visibility = isLocal ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ScratchBaseFolderBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        UpdateStepGateState();
+    }
+
+    private void ScratchFolderCheck_Click(object sender, RoutedEventArgs e)
+    {
+        UpdateStepGateState();
+    }
+
+    private void FolderFullProfileCheck_Click(object sender, RoutedEventArgs e)
+    {
+        var fullChecked = FolderFullProfileCheck.IsChecked == true;
+        ScratchStandardFoldersGrid.IsEnabled = !fullChecked;
+        ScratchStandardFoldersGrid.Opacity = fullChecked ? 0.45 : 1.0;
+
+        if (!fullChecked && !HasAnyStandardOrCustomFolderChecked())
+        {
+            FolderDocsCheck.IsChecked = true;
+            FolderDesktopCheck.IsChecked = true;
+            FolderPicturesCheck.IsChecked = true;
+        }
+
+        UpdateStepGateState();
+    }
+
+    private void FolderCustomCheck_Click(object sender, RoutedEventArgs e)
+    {
+        var customOn = FolderCustomCheck.IsChecked == true;
+        ScratchCustomFolderBox.IsEnabled = customOn;
+        ScratchBrowseCustomButton.IsEnabled = customOn;
+
+        if (customOn && string.IsNullOrWhiteSpace(ScratchCustomFolderBox.Text))
+            ScratchBrowseCustomButton_Click(sender, e);
+
+        UpdateStepGateState();
+    }
+
+    private void ScratchCustomFolderBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        UpdateStepGateState();
+    }
+
+    private void ScratchBrowseCustomButton_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new WinForms.FolderBrowserDialog
+        {
+            Description = "Escolha a pasta adicional que deseja incluir no backup",
+            UseDescriptionForTitle = true,
+            SelectedPath = Directory.Exists(ScratchCustomFolderBox.Text) ? ScratchCustomFolderBox.Text : string.Empty
+        };
+
+        if (dialog.ShowDialog() == WinForms.DialogResult.OK)
+        {
+            ScratchCustomFolderBox.Text = dialog.SelectedPath;
+            FolderCustomCheck.IsChecked = true;
+            ScratchCustomFolderBox.IsEnabled = true;
+            ScratchBrowseCustomButton.IsEnabled = true;
+        }
+
+        UpdateStepGateState();
+    }
+
+    private bool HasAnyStandardOrCustomFolderChecked()
+    {
+        return FolderDocsCheck.IsChecked == true ||
+               FolderDesktopCheck.IsChecked == true ||
+               FolderPicturesCheck.IsChecked == true ||
+               FolderVideosCheck.IsChecked == true ||
+               FolderMusicCheck.IsChecked == true ||
+               FolderDownloadsCheck.IsChecked == true ||
+               (FolderCustomCheck.IsChecked == true && !string.IsNullOrWhiteSpace(ScratchCustomFolderBox.Text));
+    }
+
+    private bool IsScratchStep4Valid()
+    {
+        if (ScratchDestTargetCombo?.SelectedItem is not WizardDestOption)
+            return false;
+
+        if (FolderFullProfileCheck.IsChecked == true)
+            return true;
+
+        if (FolderCustomCheck.IsChecked == true && string.IsNullOrWhiteSpace(ScratchCustomFolderBox.Text))
+            return false;
+
+        return HasAnyStandardOrCustomFolderChecked();
+    }
+
+    private List<SyncJob> BuildJobsFromScratchSelections()
+    {
+        var jobs = new List<SyncJob>();
+        var targetOpt = ScratchDestTargetCombo.SelectedItem as WizardDestOption;
+        var isLocalDest = targetOpt?.IsLocal == true;
+        var baseCloudFolder = ScratchBaseFolderBox.Text.Trim().Trim('/', '\\', ':');
+        var operation = (ScratchOperationCombo.SelectedItem as UiOption<RcloneOperation>)?.Value ?? RcloneOperation.Sync;
+        var freq = ScratchFrequencyCombo.SelectedItem as WizardFrequencyOption
+                   ?? new WizardFrequencyOption(true, ScheduleType.IntervalMinutes, 120, "A cada 2 horas");
+
+        var logFile = Path.Combine(_onboarding.WorkDirectory, "rclone_backup.log");
+        var filterFile = WorkspacePathResolver.FindExistingFilterFile(_onboarding.WorkDirectory);
+
+        string BuildDestForFolder(string subfolderSlug)
+        {
+            if (isLocalDest)
+            {
+                var rootLocal = targetOpt!.TargetValue;
+                return Path.Combine(rootLocal, subfolderSlug);
+            }
+
+            var remote = targetOpt?.TargetValue ?? "gdrive";
+            return string.IsNullOrWhiteSpace(baseCloudFolder)
+                ? $"{remote}:{subfolderSlug}/"
+                : $"{remote}:{baseCloudFolder}/{subfolderSlug}/";
+        }
+
+        SyncJob CreateScratchJob(string title, string sourcePath, string subfolderSlug, bool attachDefaultFilter = false)
+        {
+            var isDriveDest = !isLocalDest &&
+                              (GetSelectedProviderTag().Equals("drive", StringComparison.OrdinalIgnoreCase) ||
+                               (targetOpt?.Label.Contains("(drive)", StringComparison.OrdinalIgnoreCase) ?? false));
+
+            return new SyncJob
+            {
+                Id = Guid.NewGuid().ToString("N")[..8],
+                Name = title,
+                Enabled = true,
+                Operation = operation,
+                SourcePath = sourcePath,
+                DestinationPath = BuildDestForFolder(subfolderSlug),
+                FilterFilePath = attachDefaultFilter && File.Exists(filterFile) ? filterFile : string.Empty,
+                FilterMode = FilterRuleMode.AutoDetect,
+                EnableExcludedGraceRetention = true,
+                ExcludedRetentionDays = 30,
+                SkipLinks = true,
+                FastList = true,
+                LogFilePath = logFile,
+                ExtraFlags = isDriveDest
+                    ? "--tpslimit 6 --tpslimit-burst 6 --drive-chunk-size 64M --retries 3 --low-level-retries 5"
+                    : string.Empty,
+                Strategy = ExecutionStrategy.HybridAuto,
+                Schedule = new JobSchedule
+                {
+                    IsScheduled = freq.IsScheduled,
+                    ScheduleType = freq.Type,
+                    IntervalMinutes = freq.IntervalMinutes,
+                    DailyTime = "14:00",
+                    RetryOnFailure = true,
+                    MaxRetries = 3,
+                    RetryDelayMinutes = 5
+                }
+            };
+        }
+
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        if (FolderFullProfileCheck.IsChecked == true)
+        {
+            jobs.Add(CreateScratchJob("Backup — Pasta do Usuário", userProfile, "Usuario", attachDefaultFilter: true));
+        }
+        else
+        {
+            if (FolderDocsCheck.IsChecked == true)
+                jobs.Add(CreateScratchJob("Backup — Documentos", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Documentos"));
+
+            if (FolderDesktopCheck.IsChecked == true)
+                jobs.Add(CreateScratchJob("Backup — Área de Trabalho", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "AreaDeTrabalho"));
+
+            if (FolderPicturesCheck.IsChecked == true)
+                jobs.Add(CreateScratchJob("Backup — Imagens", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Imagens"));
+
+            if (FolderVideosCheck.IsChecked == true)
+                jobs.Add(CreateScratchJob("Backup — Vídeos", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Videos"));
+
+            if (FolderMusicCheck.IsChecked == true)
+                jobs.Add(CreateScratchJob("Backup — Músicas", Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Musicas"));
+
+            if (FolderDownloadsCheck.IsChecked == true)
+                jobs.Add(CreateScratchJob("Backup — Downloads", Path.Combine(userProfile, "Downloads"), "Downloads"));
+        }
+
+        if (FolderCustomCheck.IsChecked == true && !string.IsNullOrWhiteSpace(ScratchCustomFolderBox.Text))
+        {
+            var customPath = ScratchCustomFolderBox.Text.Trim();
+            var folderLeaf = Path.GetFileName(customPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(folderLeaf))
+                folderLeaf = "PastaExtra";
+            jobs.Add(CreateScratchJob($"Backup — {folderLeaf}", customPath, folderLeaf));
+        }
+
+        return jobs;
+    }
+
     private void SyncReviewJobsFromConfig()
     {
         _reviewJobs.Clear();
@@ -299,12 +671,16 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         }
     }
 
+    private void ImportedJobItemCheck_Click(object sender, RoutedEventArgs e)
+    {
+        UpdateStepGateState();
+    }
+
     private void WizardJobsReviewList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isPopulatingJobFields)
             return;
 
-        CommitCurrentJobEditsToMemory();
         var idx = WizardJobsReviewList.SelectedIndex;
         if (idx >= 0 && idx < _reviewJobs.Count)
             LoadJobIntoReviewForm(idx);
@@ -318,13 +694,40 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         {
             _selectedJobIndex = index;
             var job = _reviewJobs[index].Job;
-            WizardJobNameBox.Text = job.Name;
             if (WizardJobOpCombo.ItemsSource is IEnumerable<UiOption<RcloneOperation>> ops)
-                WizardJobOpCombo.SelectedItem = ops.FirstOrDefault(o => o.Value == job.Operation);
-            WizardJobEnabledCheck.IsChecked = job.Enabled;
+                WizardJobOpCombo.SelectedItem = ops.FirstOrDefault(o => o.Value == job.Operation) ?? ops.FirstOrDefault();
+
             WizardSourceBox.Text = job.SourcePath;
-            WizardDestBox.Text = job.DestinationPath;
-            WizardIntervalBox.Text = job.Schedule.IntervalMinutes.ToString();
+
+            var destOpts = WizardImportDestTargetCombo.ItemsSource as IReadOnlyList<WizardDestOption> ?? BuildAvailableDestOptions();
+            WizardImportDestTargetCombo.ItemsSource = destOpts;
+
+            var colonIdx = job.DestinationPath.IndexOf(':');
+            var isCloudDest = colonIdx > 1 && !job.DestinationPath.StartsWith(@"\\", StringComparison.Ordinal);
+            if (isCloudDest)
+            {
+                var rem = job.DestinationPath[..colonIdx];
+                var sub = job.DestinationPath[(colonIdx + 1)..];
+                WizardImportDestTargetCombo.SelectedItem =
+                    destOpts.FirstOrDefault(o => !o.IsLocal && o.TargetValue.Equals(rem, StringComparison.OrdinalIgnoreCase))
+                    ?? destOpts.FirstOrDefault();
+                WizardDestBox.Text = sub;
+            }
+            else
+            {
+                WizardImportDestTargetCombo.SelectedItem = destOpts.FirstOrDefault(o => o.IsLocal) ?? destOpts.FirstOrDefault();
+                WizardDestBox.Text = job.DestinationPath;
+            }
+
+            if (WizardImportFrequencyCombo.ItemsSource is IEnumerable<WizardFrequencyOption> freqs)
+            {
+                WizardFrequencyOption? matchFreq = !job.Schedule.IsScheduled
+                    ? freqs.FirstOrDefault(f => !f.IsScheduled)
+                    : (job.Schedule.ScheduleType == ScheduleType.DailyAtTime
+                        ? freqs.FirstOrDefault(f => f.Type == ScheduleType.DailyAtTime)
+                        : freqs.OrderBy(f => Math.Abs(f.IntervalMinutes - job.Schedule.IntervalMinutes)).FirstOrDefault(f => f.IsScheduled));
+                WizardImportFrequencyCombo.SelectedItem = matchFreq ?? freqs.FirstOrDefault();
+            }
         }
         finally
         {
@@ -332,27 +735,46 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         }
     }
 
-    private void CommitCurrentJobEditsToMemory()
+    private void CommitCurrentImportedJobEdits()
     {
         if (_selectedJobIndex < 0 || _selectedJobIndex >= _reviewJobs.Count)
             return;
 
-        var job = _reviewJobs[_selectedJobIndex].Job;
-        job.Name = string.IsNullOrWhiteSpace(WizardJobNameBox.Text) ? "Backup Principal" : WizardJobNameBox.Text.Trim();
+        var item = _reviewJobs[_selectedJobIndex];
+        var job = item.Job;
         if (WizardJobOpCombo.SelectedItem is UiOption<RcloneOperation> opOpt)
             job.Operation = opOpt.Value;
-        job.Enabled = WizardJobEnabledCheck.IsChecked == true;
+
         job.SourcePath = WizardSourceBox.Text.Trim();
-        job.DestinationPath = WizardDestBox.Text.Trim();
-        if (int.TryParse(WizardIntervalBox.Text.Trim(), out var mins) && mins > 0)
-            job.Schedule.IntervalMinutes = mins;
+
+        var destSub = WizardDestBox.Text.Trim();
+        if (WizardImportDestTargetCombo.SelectedItem is WizardDestOption { IsLocal: false } cloudOpt)
+        {
+            var cleanSub = destSub.StartsWith(cloudOpt.TargetValue + ":", StringComparison.OrdinalIgnoreCase)
+                ? destSub[(cloudOpt.TargetValue.Length + 1)..]
+                : destSub.TrimStart(':');
+            job.DestinationPath = string.IsNullOrEmpty(cleanSub) ? $"{cloudOpt.TargetValue}:" : $"{cloudOpt.TargetValue}:{cleanSub}";
+        }
+        else
+        {
+            job.DestinationPath = destSub;
+        }
+
+        if (WizardImportFrequencyCombo.SelectedItem is WizardFrequencyOption freqOpt)
+        {
+            job.Schedule.IsScheduled = freqOpt.IsScheduled;
+            job.Schedule.ScheduleType = freqOpt.Type;
+            job.Schedule.IntervalMinutes = freqOpt.IntervalMinutes;
+        }
+
+        item.NotifyChanged();
     }
 
     private void WizardJobField_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (_isPopulatingJobFields)
             return;
-        CommitCurrentJobEditsToMemory();
+        CommitCurrentImportedJobEdits();
         UpdateStepGateState();
     }
 
@@ -360,24 +782,67 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
     {
         if (_isPopulatingJobFields)
             return;
-        CommitCurrentJobEditsToMemory();
+        CommitCurrentImportedJobEdits();
         UpdateStepGateState();
     }
 
-    private void WizardJobEnabledCheck_Click(object sender, RoutedEventArgs e)
+    private void WizardImportFrequencyCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isPopulatingJobFields)
             return;
-        CommitCurrentJobEditsToMemory();
+        CommitCurrentImportedJobEdits();
+    }
+
+    private void WizardImportDestTargetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isPopulatingJobFields)
+            return;
+        CommitCurrentImportedJobEdits();
         UpdateStepGateState();
     }
 
-    private void WizardApplyJobEdit_Click(object sender, RoutedEventArgs e)
+    private void WizardServiceModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        CommitCurrentJobEditsToMemory();
-        RefreshJobsReviewListUi(_selectedJobIndex);
-        UpdateStepGateState();
+        UpdateServiceModeHints();
     }
+
+    private void WizardImportServiceModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateServiceModeHints();
+    }
+
+    private static string DescribeServiceMode(BackgroundServiceMode mode) => mode switch
+    {
+        BackgroundServiceMode.WindowsService =>
+            "⚙ Serviço Nativo (services.msc): Liga automaticamente junto com o computador antes mesmo de você fazer login no Windows (ideal para servidores ou PCs sempre ligados). Ao clicar em Concluir, o Windows pedirá confirmação de Administrador (UAC) uma única vez.",
+        BackgroundServiceMode.ManualOnly =>
+            "⏸ Apenas Manual: Nenhum serviço será iniciado automaticamente com o Windows. Os agendamentos só rodarão quando você abrir o RcloneManager manualmente.",
+        _ =>
+            "✓ Recomendado para uso pessoal: Inicia sozinho e silenciosamente assim que você entra no Windows, mantendo os backups automáticos mesmo com a janela fechada. Não pede senha de Administrador (UAC)."
+    };
+
+    private void UpdateServiceModeHints()
+    {
+        if (WizardServiceModeHintText != null)
+        {
+            var mode = (WizardServiceModeCombo?.SelectedItem as UiOption<BackgroundServiceMode>)?.Value ?? BackgroundServiceMode.UserStartup;
+            WizardServiceModeHintText.Text = DescribeServiceMode(mode);
+            WizardServiceModeHintText.Foreground = mode == BackgroundServiceMode.WindowsService
+                ? new SolidColorBrush(MediaColor.FromRgb(253, 230, 138))
+                : new SolidColorBrush(MediaColor.FromRgb(148, 163, 184));
+        }
+
+        if (WizardImportServiceModeHintText != null)
+        {
+            var mode = (WizardImportServiceModeCombo?.SelectedItem as UiOption<BackgroundServiceMode>)?.Value ?? BackgroundServiceMode.UserStartup;
+            WizardImportServiceModeHintText.Text = DescribeServiceMode(mode);
+            WizardImportServiceModeHintText.Foreground = mode == BackgroundServiceMode.WindowsService
+                ? new SolidColorBrush(MediaColor.FromRgb(253, 230, 138))
+                : new SolidColorBrush(MediaColor.FromRgb(148, 163, 184));
+        }
+    }
+
+    #endregion
 
     private void WizardReleaseField_Changed(object sender, TextChangedEventArgs e)
     {
@@ -470,7 +935,6 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
 
         var provider = GetSelectedProviderTag();
 
-        // Se o apelido atual era apenas o apelido padrão de outro provedor, atualiza para o padrão do novo provedor
         if (_onboarding.ImportedRemotes.Count == 0 && DefaultAliasByProvider.TryGetValue(provider, out var defaultAlias))
         {
             var currentAlias = WizardRemoteNameBox.Text.Trim();
@@ -584,7 +1048,6 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
                 return;
             }
 
-            // Provedores de servidor/credenciais (s3, sftp, ftp, smb, webdav)
             WizardAuthModeCombo.ItemsSource = new[]
             {
                 new UiOption<RemoteAuthMode>(RemoteAuthMode.KeyOrCredentials, "Credenciais do servidor")
@@ -630,7 +1093,7 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
                     WizardProviderGuideText.Text = "Informe o nome ou IP do computador na rede Windows (SMB) e credenciais de acesso para validar.";
                     break;
 
-                default: // webdav
+                default:
                     WizardKeyFileSection.Visibility = Visibility.Collapsed;
                     WizardHostLabel.Text = "URL completa do WebDAV *";
                     WizardUserLabel.Text = "Usuário *";
@@ -788,10 +1251,12 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
             3 => !_isConnectingProvider && (_onboarding.ImportedRemotes.Count > 0
                 ? _onboarding.ImportedRemotes.All(r => r.IsAuthenticated)
                 : IsCurrentProviderSelectionVerified()),
-            4 => _reviewJobs.Count > 0 &&
-                 _reviewJobs.Where(r => r.Job.Enabled).All(r =>
-                     !string.IsNullOrWhiteSpace(r.Job.SourcePath) &&
-                     !string.IsNullOrWhiteSpace(r.Job.DestinationPath)),
+            4 => _startMode == WizardStartMode.Import
+                ? (_reviewJobs.Any(r => r.Job.Enabled) &&
+                   _reviewJobs.Where(r => r.Job.Enabled).All(r =>
+                       !string.IsNullOrWhiteSpace(r.Job.SourcePath) &&
+                       !string.IsNullOrWhiteSpace(r.Job.DestinationPath)))
+                : IsScratchStep4Valid(),
             _ => false
         };
     }
@@ -810,7 +1275,7 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         ApplyBadgeState(Step1Badge, Step1BadgeText, 1, "1. Como Começar", activeBrush, doneBrush, lockedBrush);
         ApplyBadgeState(Step2Badge, Step2BadgeText, 2, "2. Preparar Rclone", activeBrush, doneBrush, lockedBrush);
         ApplyBadgeState(Step3Badge, Step3BadgeText, 3, "3. Conectar Destino", activeBrush, doneBrush, lockedBrush);
-        ApplyBadgeState(Step4Badge, Step4BadgeText, 4, "4. Revisar & Concluir", activeBrush, doneBrush, lockedBrush);
+        ApplyBadgeState(Step4Badge, Step4BadgeText, 4, "4. Escolher Pastas", activeBrush, doneBrush, lockedBrush);
 
         BackButton.IsEnabled = _step > 1 && !_isConnectingProvider;
         DismissWizardButton.IsEnabled = !_isConnectingProvider;
@@ -881,9 +1346,13 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
                     : (ready
                         ? $"✓ {GetSelectedProviderDisplayName()} validado com sucesso! Clique em 'Avançar ▶'."
                         : $"Conclua a conexão e validação de '{GetSelectedProviderDisplayName()}' para liberar a próxima etapa.")),
-            4 => ready
-                ? "✓ Tudo conferido! Clique em 'Concluir e Salvar' para finalizar."
-                : "Preencha a pasta de origem e o destino das tarefas ativas antes de concluir.",
+            4 => _startMode == WizardStartMode.Import
+                ? (ready
+                    ? "✓ Tarefas prontas! Clique em 'Concluir e Salvar' para finalizar."
+                    : "Mantenha ao menos uma tarefa marcada com origem e destino preenchidos.")
+                : (ready
+                    ? "✓ Pastas selecionadas! Clique em 'Concluir e Salvar' para finalizar."
+                    : "Marque pelo menos uma pasta acima para incluir no seu backup."),
             _ => string.Empty
         };
     }
@@ -1111,7 +1580,6 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
             return;
         }
 
-        // Caso especial: provedor "local" (pasta/HD externo)
         if (provider.Equals("local", StringComparison.OrdinalIgnoreCase))
         {
             var targetFolder = WizardLocalDestFolderBox.Text.Trim();
@@ -1122,7 +1590,6 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
                 _ = Directory.EnumerateFileSystemEntries(fullPath).Take(1).ToList();
 
                 _verifiedLocalFolderPath = targetFolder;
-                ApplySuggestedDestinationToDefaultJob(fullPath);
                 RefreshStep3StatusBanner();
                 UpdateStepGateState();
             }
@@ -1170,7 +1637,6 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
             if (outcome.TestSucceeded)
             {
                 MarkRemoteVerified(provider, remoteName);
-                ApplySuggestedDestinationToDefaultJob($"{remoteName}:MeusBackups/");
                 WizardConnectionStatusBorder.BorderBrush = new SolidColorBrush(MediaColor.FromRgb(16, 185, 129));
                 WizardRemoteActionText.Foreground = new SolidColorBrush(MediaColor.FromRgb(16, 185, 129));
                 WizardRemoteActionText.Text = outcome.StatusMessage;
@@ -1213,6 +1679,7 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
             _verifiedRemotesByProvider[provider] = set;
         }
         set.Add(remoteName);
+        _lastVerifiedRemoteAlias = remoteName;
 
         var imported = _onboarding.ImportedRemotes.FirstOrDefault(
             r => r.Blueprint.Name.Equals(remoteName, StringComparison.OrdinalIgnoreCase) &&
@@ -1227,24 +1694,13 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
             set.Remove(remoteName);
     }
 
-    private void ApplySuggestedDestinationToDefaultJob(string suggestedDestination)
-    {
-        if (_startMode != WizardStartMode.Scratch || _reviewJobs.Count == 0)
-            return;
-
-        var firstJob = _reviewJobs[0].Job;
-        firstJob.DestinationPath = suggestedDestination;
-        if (_selectedJobIndex == 0)
-            LoadJobIntoReviewForm(0);
-    }
-
     private void BackButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isConnectingProvider || _step <= 1)
             return;
 
-        if (_step == 4)
-            CommitCurrentJobEditsToMemory();
+        if (_step == 4 && _startMode == WizardStartMode.Import)
+            CommitCurrentImportedJobEdits();
 
         _step--;
         UpdateStepUi();
@@ -1281,14 +1737,14 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
             }
             else if (_step == 4)
             {
-                RefreshJobsReviewListUi(_selectedJobIndex >= 0 ? _selectedJobIndex : 0);
+                RefreshStep4ModeAndTargets();
             }
 
             UpdateStepUi();
             return;
         }
 
-        await FinishWizardAsync(saveReviewedJobs: true);
+        await FinishWizardAsync();
     }
 
     private void DismissWizardButton_Click(object sender, RoutedEventArgs e)
@@ -1298,16 +1754,40 @@ public partial class FirstRunWizardWindow : System.Windows.Controls.UserControl,
         CloseOverlay?.Invoke(false);
     }
 
-    private async Task FinishWizardAsync(bool saveReviewedJobs)
+    private async Task FinishWizardAsync()
     {
-        IReadOnlyList<SyncJob>? reviewedJobs = null;
-        if (saveReviewedJobs)
+        List<SyncJob> finalJobs;
+        BackgroundServiceMode selectedServiceMode;
+
+        if (_startMode == WizardStartMode.Import)
         {
-            CommitCurrentJobEditsToMemory();
-            reviewedJobs = _reviewJobs.Select(r => r.Job).ToList();
+            CommitCurrentImportedJobEdits();
+            finalJobs = _reviewJobs.Select(r => r.Job).ToList();
+            selectedServiceMode = (WizardImportServiceModeCombo.SelectedItem as UiOption<BackgroundServiceMode>)?.Value
+                                  ?? BackgroundServiceMode.UserStartup;
+        }
+        else
+        {
+            finalJobs = BuildJobsFromScratchSelections();
+            selectedServiceMode = (WizardServiceModeCombo.SelectedItem as UiOption<BackgroundServiceMode>)?.Value
+                                  ?? BackgroundServiceMode.UserStartup;
         }
 
-        await _onboarding.CompleteAsync(reviewedJobs, WizardAutoStartupCheck.IsChecked == true);
-        CloseOverlay?.Invoke(true);
+        NextButton.IsEnabled = false;
+        BackButton.IsEnabled = false;
+        try
+        {
+            var (ok, note) = await _onboarding.CompleteWithServiceModeAsync(finalJobs, selectedServiceMode);
+            if (!ok && !string.IsNullOrWhiteSpace(note))
+            {
+                await OverlayHost.ShowCurrentAlertAsync("Configuração do Serviço em 2º Plano", note, OverlayAlertKind.Warning);
+            }
+            CloseOverlay?.Invoke(true);
+        }
+        finally
+        {
+            NextButton.IsEnabled = true;
+            BackButton.IsEnabled = _step > 1;
+        }
     }
 }

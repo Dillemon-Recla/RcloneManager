@@ -303,6 +303,11 @@ public partial class MainWindow : Window
             ToggleRcdButton.Content = status.RcDaemonRunning ? "Parar Daemon RC" : "Iniciar Daemon RC";
 
             WindowsStartupCheck.IsChecked = status.StartupWithWindowsEnabled;
+            ServiceAdminStatusText.Text = status.WindowsServiceRunning
+                ? "WinService Nativo: Ativo (porta 5580)"
+                : (status.WindowsServiceInstalled
+                    ? "WinService instalado (parado) | Sessão local ativa"
+                    : "Modo Sessão do Usuário ativo (porta 5580)");
             VaultStatusText.Text = status.EncryptionKeyActive
                 ? "Proteção local: Ativa"
                 : "Proteção local: Automática";
@@ -867,6 +872,8 @@ public partial class MainWindow : Window
             SetDestinationUi(job.DestinationPath);
 
             JobFilterPathBox.Text = job.FilterFilePath;
+            JobExcludedRetentionCheck.IsChecked = job.EnableExcludedGraceRetention;
+            JobExcludedGraceDaysBox.Text = (job.ExcludedRetentionDays > 0 ? job.ExcludedRetentionDays : 30).ToString(CultureInfo.InvariantCulture);
             SetPresetStringCombo(JobMaxSizePresetCombo, JobMaxSizeBox, job.MaxSize);
             SetPresetStringCombo(JobBwPresetCombo, JobBwLimitBox, job.BandwidthLimit);
 
@@ -962,6 +969,7 @@ public partial class MainWindow : Window
 
         var bwPreset = GetSelectedOption(JobBwPresetCombo, string.Empty);
         var bwLimit = bwPreset == "*" ? JobBwLimitBox.Text.Trim() : bwPreset;
+        var graceDays = int.TryParse(JobExcludedGraceDaysBox.Text.Trim(), out var gd) && gd > 0 ? gd : 30;
 
         return new SyncJob
         {
@@ -974,6 +982,8 @@ public partial class MainWindow : Window
             DestinationPath = BuildDestinationFromUi(),
             FilterFilePath = JobFilterPathBox.Text.Trim(),
             FilterMode = GetSelectedOption(JobFilterModeCombo, FilterRuleMode.AutoDetect),
+            EnableExcludedGraceRetention = JobExcludedRetentionCheck.IsChecked == true,
+            ExcludedRetentionDays = graceDays,
             MaxSize = maxSize,
             BandwidthLimit = bwLimit,
             LogFilePath = string.IsNullOrWhiteSpace(JobLogFileBox.Text) ? "rclone_backup.log" : JobLogFileBox.Text.Trim(),
@@ -1086,6 +1096,155 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             FooterInfoText.Text = $"Erro ao parar tarefa: {ex.Message}";
+        }
+    }
+
+    private async void PurgeJobExcludedButton_Click(object sender, RoutedEventArgs e)
+    {
+        var targetJob = _cachedJobs.FirstOrDefault(j => j.Id == _selectedJobId) ?? _cachedJobs.FirstOrDefault();
+        if (targetJob == null)
+        {
+            await _overlayHost.ShowAlertAsync("Nenhuma tarefa selecionada", "Selecione uma tarefa para expurgar os itens excluídos.");
+            return;
+        }
+
+        await RunInteractivePurgeExcludedAsync(targetJob);
+    }
+
+    private SyncJob? ResolveTargetJobForCurrentFilter()
+    {
+        var filterBox = FilterFilePathBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(filterBox))
+        {
+            var fileName = Path.GetFileName(filterBox);
+            var byFilter = _cachedJobs.FirstOrDefault(j =>
+                !string.IsNullOrWhiteSpace(j.FilterFilePath) &&
+                (j.FilterFilePath.Equals(filterBox, StringComparison.OrdinalIgnoreCase) ||
+                 Path.GetFileName(j.FilterFilePath).Equals(fileName, StringComparison.OrdinalIgnoreCase)));
+            if (byFilter != null)
+                return byFilter;
+        }
+
+        return _cachedJobs.FirstOrDefault(j => j.Id == _selectedJobId && !string.IsNullOrWhiteSpace(j.FilterFilePath))
+               ?? _cachedJobs.FirstOrDefault(j => !string.IsNullOrWhiteSpace(j.FilterFilePath))
+               ?? _cachedJobs.FirstOrDefault();
+    }
+
+    private async void ScanExcludedRetentionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var targetJob = ResolveTargetJobForCurrentFilter();
+        if (targetJob == null)
+        {
+            await _overlayHost.ShowAlertAsync("Sem tarefa vinculada", "Crie uma tarefa com destino configurado antes de verificar itens na nuvem.");
+            return;
+        }
+
+        ScanExcludedRetentionButton.IsEnabled = false;
+        ExcludedRetentionSummaryText.Text = $"Consultando '{targetJob.DestinationPath}' para localizar itens que entraram na exclusão...";
+        try
+        {
+            var status = await _api.GetExcludedRetentionAsync(targetJob.Id, scan: true);
+            if (status != null)
+            {
+                ExcludedRetentionSummaryText.Text = status.StatusSummary;
+                FooterInfoText.Text = status.StatusSummary;
+            }
+        }
+        catch (Exception ex)
+        {
+            ExcludedRetentionSummaryText.Text = $"Falha ao verificar na nuvem: {ex.Message}";
+        }
+        finally
+        {
+            ScanExcludedRetentionButton.IsEnabled = true;
+        }
+    }
+
+    private async void PurgeExcludedFromFilterTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        var targetJob = ResolveTargetJobForCurrentFilter();
+        if (targetJob == null)
+        {
+            await _overlayHost.ShowAlertAsync("Sem tarefa vinculada", "Configure uma tarefa antes de expurgar itens excluídos.");
+            return;
+        }
+
+        await RunInteractivePurgeExcludedAsync(targetJob);
+    }
+
+    private async Task RunInteractivePurgeExcludedAsync(SyncJob job)
+    {
+        if (string.IsNullOrWhiteSpace(job.FilterFilePath))
+        {
+            await _overlayHost.ShowAlertAsync(
+                "Sem Lista de Exclusão",
+                $"A tarefa '{job.Name}' não tem um arquivo de filtro configurado.");
+            return;
+        }
+
+        PurgeJobExcludedButton.IsEnabled = false;
+        PurgeExcludedFromFilterTabButton.IsEnabled = false;
+        FooterInfoText.Text = $"Verificando itens excluídos existentes em '{job.DestinationPath}'...";
+        ExcludedRetentionSummaryText.Text = $"Inspecionando '{job.DestinationPath}' antes do expurgo...";
+
+        try
+        {
+            var status = await _api.GetExcludedRetentionAsync(job.Id, scan: true);
+            if (status == null || status.TotalTrackedFiles == 0)
+            {
+                var cleanMsg = $"Nenhum item bloqueado pelo filtro foi encontrado em '{job.DestinationPath}'. O destino já está limpo!";
+                ExcludedRetentionSummaryText.Text = cleanMsg;
+                FooterInfoText.Text = cleanMsg;
+                await _overlayHost.ShowAlertAsync("Destino Já Limpo", cleanMsg);
+                return;
+            }
+
+            ExcludedRetentionSummaryText.Text = status.StatusSummary;
+            var folderLines = status.TopFolders.Count > 0
+                ? string.Join("\n", status.TopFolders.Select(f => $"  • {f.FolderName}: {f.FileCount} arquivo(s) (carência restante: {f.DaysRemaining} dia(s))"))
+                : $"  • {status.TotalTrackedFiles} arquivo(s)";
+
+            var confirm = await _overlayHost.ShowConfirmAsync(
+                "Expurgar Excluídos na Hora",
+                $"Foram encontrados {status.TotalTrackedFiles} arquivo(s) já enviados em '{job.DestinationPath}' que hoje estão na lista de exclusão:\n\n" +
+                $"{folderLines}\n\n" +
+                $"Pela regra normal eles teriam até {status.GraceDays} dia(s) de carência. Deseja apagá-los do destino IMEDIATAMENTE?",
+                confirmText: "Expurgar Agora",
+                cancelText: "Manter Carência",
+                isDanger: true);
+
+            if (!confirm)
+            {
+                FooterInfoText.Text = "Expurgo cancelado — itens mantidos no período de carência.";
+                return;
+            }
+
+            FooterInfoText.Text = $"Expurgando {status.TotalTrackedFiles} arquivo(s) excluído(s) de '{job.DestinationPath}'...";
+            ExcludedRetentionSummaryText.Text = $"Removendo {status.TotalTrackedFiles} arquivo(s) excluído(s) na nuvem...";
+
+            var purgeRes = await _api.PurgeExcludedNowAsync(job.Id);
+            if (purgeRes is { Success: true })
+            {
+                ExcludedRetentionSummaryText.Text = purgeRes.Message;
+                FooterInfoText.Text = purgeRes.Message;
+                await _overlayHost.ShowAlertAsync("Expurgo Concluído", purgeRes.Message);
+            }
+            else
+            {
+                var err = purgeRes?.Message ?? "Não foi possível concluir o expurgo.";
+                ExcludedRetentionSummaryText.Text = err;
+                await _overlayHost.ShowAlertAsync("Falha no Expurgo", err, OverlayAlertKind.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            ExcludedRetentionSummaryText.Text = $"Erro durante expurgo: {ex.Message}";
+            await _overlayHost.ShowAlertAsync("Erro no Expurgo", ex.Message, OverlayAlertKind.Error);
+        }
+        finally
+        {
+            PurgeJobExcludedButton.IsEnabled = true;
+            PurgeExcludedFromFilterTabButton.IsEnabled = true;
         }
     }
 
@@ -1256,6 +1415,17 @@ public partial class MainWindow : Window
             {
                 FilterEditorBox.Text = resp.Content;
                 RenderFilterAnalysis(resp.Analysis);
+                var job = ResolveTargetJobForCurrentFilter();
+                if (job != null)
+                {
+                    try
+                    {
+                        var cached = await _api.GetExcludedRetentionAsync(job.Id, scan: false);
+                        if (cached != null)
+                            ExcludedRetentionSummaryText.Text = cached.StatusSummary;
+                    }
+                    catch { }
+                }
             }
         }
         catch (Exception ex)
@@ -1430,14 +1600,30 @@ public partial class MainWindow : Window
         }
     }
 
-    private void InstallWindowsServiceButton_Click(object sender, RoutedEventArgs e)
+    private async void InstallWindowsServiceButton_Click(object sender, RoutedEventArgs e)
     {
-        RunElevatedServiceCommand("--install-service", "Serviço do Windows registrado via sc.exe.");
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        FooterInfoText.Text = "Instalando e iniciando Serviço Nativo do Windows (confirme o UAC)...";
+        var (ok, _, msg) = await ServiceLauncher.TryInstallAndStartWindowsServiceAsync(workDir, _api);
+        if (ok)
+        {
+            try { await _api.SetServiceModeAsync(BackgroundServiceMode.WindowsService); } catch { }
+        }
+        FooterInfoText.Text = msg;
+        await PollServiceAsync();
     }
 
-    private void UninstallWindowsServiceButton_Click(object sender, RoutedEventArgs e)
+    private async void UninstallWindowsServiceButton_Click(object sender, RoutedEventArgs e)
     {
-        RunElevatedServiceCommand("--uninstall-service", "Serviço do Windows removido via sc.exe.");
+        var workDir = ServiceLauncher.ResolveWorkspaceDirectory();
+        FooterInfoText.Text = "Removendo Serviço Nativo do Windows (confirme o UAC)...";
+        var (ok, msg) = await ServiceLauncher.TryUninstallWindowsServiceAsync(workDir, _api);
+        if (ok)
+        {
+            try { await _api.SetServiceModeAsync(BackgroundServiceMode.UserStartup); } catch { }
+        }
+        FooterInfoText.Text = msg;
+        await PollServiceAsync();
     }
 
     private async void ApplyPinnedReleaseButton_Click(object sender, RoutedEventArgs e)

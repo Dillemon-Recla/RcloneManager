@@ -47,6 +47,10 @@ public interface IWizardOnboardingService
         CancellationToken ct = default);
     Task<RemoteTestResult> VerifyExistingRemoteAsync(string remoteName, string expectedProvider, CancellationToken ct = default);
     Task CompleteAsync(IReadOnlyList<SyncJob>? reviewedJobs, bool autoStartupWithWindows, CancellationToken ct = default);
+    Task<(bool ServiceInstalledOk, string StatusNote)> CompleteWithServiceModeAsync(
+        IReadOnlyList<SyncJob>? reviewedJobs,
+        BackgroundServiceMode serviceMode,
+        CancellationToken ct = default);
 }
 
 public sealed class WizardOnboardingService : IWizardOnboardingService
@@ -328,28 +332,70 @@ public sealed class WizardOnboardingService : IWizardOnboardingService
         bool autoStartupWithWindows,
         CancellationToken ct = default)
     {
+        var mode = autoStartupWithWindows ? BackgroundServiceMode.UserStartup : BackgroundServiceMode.ManualOnly;
+        await CompleteWithServiceModeAsync(reviewedJobs, mode, ct);
+    }
+
+    public async Task<(bool ServiceInstalledOk, string StatusNote)> CompleteWithServiceModeAsync(
+        IReadOnlyList<SyncJob>? reviewedJobs,
+        BackgroundServiceMode serviceMode,
+        CancellationToken ct = default)
+    {
         if (reviewedJobs != null)
             CurrentConfig.Jobs = reviewedJobs.Select(j => j.Clone()).ToList();
 
         if (string.IsNullOrWhiteSpace(CurrentConfig.RcloneConfigPath))
             CurrentConfig.RcloneConfigPath = _defaultFactory.DetectRcloneConfigPath(CurrentConfig.RcloneExecutablePath);
 
+        CurrentConfig.PreferredServiceMode = serviceMode;
         CurrentConfig.FirstRunCompleted = true;
 
         // Rotaciona atomicamente a chave descartável no momento em que a configuração revisada é persistida.
         _repository.Save(CurrentConfig, rotateDisposableKey: true);
+
+        if (serviceMode == BackgroundServiceMode.WindowsService)
+        {
+            if (_api != null)
+            {
+                try { await _api.SetServiceModeAsync(BackgroundServiceMode.WindowsService, ct); } catch { }
+            }
+
+            var (winOk, cancelled, msg) = await ServiceLauncher.TryInstallAndStartWindowsServiceAsync(WorkDirectory, _api, ct);
+            if (!winOk)
+            {
+                // Se o usuário cancelou o UAC ou falhou, garante fallback seguro para o agendador da sessão do usuário
+                CurrentConfig.PreferredServiceMode = cancelled ? BackgroundServiceMode.UserStartup : BackgroundServiceMode.ManualOnly;
+                _repository.Save(CurrentConfig, rotateDisposableKey: false);
+                if (_api != null)
+                {
+                    try
+                    {
+                        await _api.ReloadServiceConfigAsync(ct);
+                        await _api.SetServiceModeAsync(CurrentConfig.PreferredServiceMode, ct);
+                    }
+                    catch { }
+                }
+                return (false, msg);
+            }
+
+            return (true, msg);
+        }
 
         if (_api != null)
         {
             try
             {
                 await _api.ReloadServiceConfigAsync(ct);
-                if (reviewedJobs != null)
-                    await _api.SetStartupAsync(autoStartupWithWindows, ct);
+                await _api.SetServiceModeAsync(serviceMode, ct);
             }
             catch
             {
             }
         }
+
+        var note = serviceMode == BackgroundServiceMode.UserStartup
+            ? "Agendador configurado para iniciar automaticamente ao entrar no Windows."
+            : "Configurado em modo manual (sem inicialização automática com o Windows).";
+        return (true, note);
     }
 }

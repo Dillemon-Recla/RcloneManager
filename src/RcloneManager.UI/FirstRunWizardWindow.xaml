@@ -1,8 +1,8 @@
 <UserControl x:Class="RcloneManager.UI.FirstRunWizardWindow"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Width="750"
-             Height="585">
+             Width="760"
+             Height="645">
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -316,78 +316,220 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- ETAPA 4: REVISÃO DAS TAREFAS & CONCLUIR -->
+                <!-- ETAPA 4: ESCOLHA VISUAL COM CAIXAS DE SELEÇÃO & CONCLUIR -->
                 <Grid x:Name="Step4Panel" Visibility="Collapsed">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="115"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+                    <!-- MODO A: COMEÇAR DO ZERO (CAIXAS DE SELEÇÃO DE PASTAS + COMBOS SIMPLES) -->
+                    <ScrollViewer x:Name="Step4ScratchPanel" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="0,0,4,0">
+                            <TextBlock Text="O que você deseja incluir no backup?" FontSize="16" FontWeight="Bold" Margin="0,0,0,3"/>
+                            <TextBlock Text="Marque as pastas que deseja proteger e escolha a frequência nos seletores abaixo:"
+                                       Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" Margin="0,0,0,10"/>
 
-                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
-                        <TextBlock Text="Revisar Tarefas de Backup" FontSize="16" FontWeight="Bold" Margin="0,0,0,4"/>
-                        <TextBlock Text="Confira os caminhos de origem e destino de suas tarefas antes de finalizar."
-                                   Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" FontSize="11.5"/>
-                    </StackPanel>
+                            <!-- CAIXAS DE SELEÇÃO DE PASTAS DO USUÁRIO -->
+                            <Border Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="Pastas deste computador" FontSize="12.5" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,0,0,8"/>
 
-                    <ListBox x:Name="WizardJobsReviewList" Grid.Row="1" Background="#0B1220" Foreground="#F8FAFC"
-                             BorderBrush="#334155" Margin="0,0,0,10" SelectionChanged="WizardJobsReviewList_SelectionChanged"/>
+                                    <Grid x:Name="ScratchStandardFoldersGrid">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="2" Margin="0,0,0,8">
-                        <Grid Margin="0,0,0,6">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.4*"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="1.2*"/>
-                                <ColumnDefinition Width="10"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Nome da Tarefa" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
-                                <TextBox x:Name="WizardJobNameBox" TextChanged="WizardJobField_TextChanged"/>
+                                        <CheckBox x:Name="FolderDocsCheck" Grid.Row="0" Grid.Column="0" Content="Documentos"
+                                                  IsChecked="True" Click="ScratchFolderCheck_Click" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="FolderDesktopCheck" Grid.Row="0" Grid.Column="1" Content="Área de Trabalho (Desktop)"
+                                                  IsChecked="True" Click="ScratchFolderCheck_Click" Margin="0,0,0,8"/>
+
+                                        <CheckBox x:Name="FolderPicturesCheck" Grid.Row="1" Grid.Column="0" Content="Imagens e Fotos"
+                                                  IsChecked="True" Click="ScratchFolderCheck_Click" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="FolderVideosCheck" Grid.Row="1" Grid.Column="1" Content="Vídeos"
+                                                  IsChecked="False" Click="ScratchFolderCheck_Click" Margin="0,0,0,8"/>
+
+                                        <CheckBox x:Name="FolderMusicCheck" Grid.Row="2" Grid.Column="0" Content="Músicas"
+                                                  IsChecked="False" Click="ScratchFolderCheck_Click" Margin="0,0,8,6"/>
+                                        <CheckBox x:Name="FolderDownloadsCheck" Grid.Row="2" Grid.Column="1" Content="Downloads"
+                                                  IsChecked="False" Click="ScratchFolderCheck_Click" Margin="0,0,0,6"/>
+                                    </Grid>
+
+                                    <Separator Background="#334155" Margin="0,4,0,8"/>
+
+                                    <CheckBox x:Name="FolderFullProfileCheck"
+                                              Content="Pasta completa do usuário (inclui tudo com filtro automático de temporários)"
+                                              IsChecked="False" Click="FolderFullProfileCheck_Click" Margin="0,0,0,8"/>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="FolderCustomCheck" Grid.Column="0" Content="Outra pasta:"
+                                                  VerticalAlignment="Center" Click="FolderCustomCheck_Click" Margin="0,0,8,0"/>
+                                        <TextBox x:Name="ScratchCustomFolderBox" Grid.Column="1" IsEnabled="False"
+                                                 TextChanged="ScratchCustomFolderBox_TextChanged"/>
+                                        <Button x:Name="ScratchBrowseCustomButton" Grid.Column="2" Content="Escolher..."
+                                                IsEnabled="False" Margin="6,0,0,0" Click="ScratchBrowseCustomButton_Click"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- SELETORES SIMPLES DE DESTINO, MODO E FREQUÊNCIA -->
+                            <Border Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="1.25*"/>
+                                            <ColumnDefinition Width="10"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="Onde salvar" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,3"/>
+                                            <ComboBox x:Name="ScratchDestTargetCombo" SelectionChanged="ScratchDestTargetCombo_SelectionChanged"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="ScratchSubfolderPanel" Grid.Column="2">
+                                            <TextBlock Text="Nome da pasta no destino" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,3"/>
+                                            <TextBox x:Name="ScratchBaseFolderBox" Text="MeusBackups" TextChanged="ScratchBaseFolderBox_TextChanged"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="1.25*"/>
+                                            <ColumnDefinition Width="10"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="Como atualizar os arquivos" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,3"/>
+                                            <ComboBox x:Name="ScratchOperationCombo"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="Quando executar" FontSize="11.5" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,3"/>
+                                            <ComboBox x:Name="ScratchFrequencyCombo"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- COMO O SERVIÇO RODA EM SEGUNDO PLANO -->
+                            <Border Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                                <StackPanel>
+                                    <TextBlock Text="Como manter o serviço automático funcionando em 2º plano?"
+                                               FontSize="12.5" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="WizardServiceModeCombo" SelectionChanged="WizardServiceModeCombo_SelectionChanged"/>
+                                    <TextBlock x:Name="WizardServiceModeHintText"
+                                               FontSize="11.5" Foreground="{StaticResource TextMutedBrush}"
+                                               TextWrapping="Wrap" Margin="2,6,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- MODO B: REVISÃO DE TAREFAS IMPORTADAS (COM CHECKBOX POR TAREFA E COMBOS) -->
+                    <Grid x:Name="Step4ImportPanel" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                            <TextBlock Text="Selecione as Tarefas Importadas" FontSize="16" FontWeight="Bold" Margin="0,0,0,3"/>
+                            <TextBlock Text="Marque quais tarefas deseja manter ativas neste computador e ajuste nos seletores se precisar:"
+                                       Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" FontSize="11.5"/>
+                        </StackPanel>
+
+                        <ListBox x:Name="WizardJobsReviewList" Grid.Row="1"
+                                 Background="#0B1220" Foreground="#F8FAFC" BorderBrush="#334155"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 Margin="0,0,0,10" SelectionChanged="WizardJobsReviewList_SelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="2,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                                  VerticalAlignment="Center" Margin="0,0,8,0"
+                                                  Click="ImportedJobItemCheck_Click"/>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding TitleText}" FontWeight="SemiBold" FontSize="12.5"
+                                                       Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding RouteText}" FontSize="11"
+                                                       Foreground="{StaticResource TextMutedBrush}" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <Border Grid.Row="2" Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,8">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="1.15*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="0.95*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="De onde copiar (neste PC)" FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,2"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="WizardSourceBox" TextChanged="WizardJobField_TextChanged"/>
+                                            <Button Grid.Column="1" Content="..." Padding="8,5" Margin="4,0,0,0" Click="WizardBrowseSource_Click"/>
+                                        </Grid>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Ação" FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,2"/>
+                                        <ComboBox x:Name="WizardJobOpCombo" SelectionChanged="WizardJobOpCombo_SelectionChanged"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="Frequência" FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,2"/>
+                                        <ComboBox x:Name="WizardImportFrequencyCombo" SelectionChanged="WizardImportFrequencyCombo_SelectionChanged"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.1*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="1.2*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Onde salvar" FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,2"/>
+                                        <ComboBox x:Name="WizardImportDestTargetCombo" SelectionChanged="WizardImportDestTargetCombo_SelectionChanged"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Pasta no destino" FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,0,2"/>
+                                        <TextBox x:Name="WizardDestBox" TextChanged="WizardJobField_TextChanged"/>
+                                    </StackPanel>
+                                </Grid>
                             </StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="Ação" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
-                                <ComboBox x:Name="WizardJobOpCombo" SelectionChanged="WizardJobOpCombo_SelectionChanged"/>
-                            </StackPanel>
-                            <CheckBox x:Name="WizardJobEnabledCheck" Grid.Column="4" Content="Tarefa ativa"
-                                      Click="WizardJobEnabledCheck_Click" VerticalAlignment="Bottom" Margin="0,0,0,6"/>
-                        </Grid>
+                        </Border>
 
-                        <TextBlock Text="De onde copiar (pasta neste computador)" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
-                        <Grid Margin="0,2,0,6">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="WizardSourceBox" TextChanged="WizardJobField_TextChanged"/>
-                            <Button Grid.Column="1" Content="Escolher..." Margin="6,0,0,0" Click="WizardBrowseSource_Click"/>
-                        </Grid>
-
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.5*"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="115"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Onde salvar (ex: gdrive:MeusBackups/ ou pasta local)" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
-                                <TextBox x:Name="WizardDestBox" TextChanged="WizardJobField_TextChanged"/>
+                        <Border Grid.Row="3" Background="#0B1220" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="10,8">
+                            <StackPanel>
+                                <TextBlock Text="Como manter o serviço automático funcionando em 2º plano?"
+                                           FontSize="12" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="WizardImportServiceModeCombo" SelectionChanged="WizardImportServiceModeCombo_SelectionChanged"/>
+                                <TextBlock x:Name="WizardImportServiceModeHintText"
+                                           FontSize="11" Foreground="{StaticResource TextMutedBrush}"
+                                           TextWrapping="Wrap" Margin="2,5,0,0"/>
                             </StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="Repetir a cada (min)" FontSize="11" Foreground="{StaticResource TextMutedBrush}"/>
-                                <TextBox x:Name="WizardIntervalBox" Text="120" TextChanged="WizardJobField_TextChanged"/>
-                            </StackPanel>
-                            <Button Grid.Column="4" Content="Atualizar Lista" VerticalAlignment="Bottom"
-                                    Click="WizardApplyJobEdit_Click"/>
-                        </Grid>
-                    </StackPanel>
-
-                    <CheckBox x:Name="WizardAutoStartupCheck" Grid.Row="3" IsChecked="True"
-                              Content="Iniciar serviço de agendamento automaticamente junto com o Windows"/>
+                        </Border>
+                    </Grid>
                 </Grid>
             </Grid>
         </Border>

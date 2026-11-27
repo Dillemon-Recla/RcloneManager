@@ -117,6 +117,21 @@ public sealed class ServiceApiClient : IDisposable
         resp.EnsureSuccessStatusCode();
     }
 
+    public async Task<ExcludedRetentionStatusDto?> GetExcludedRetentionAsync(string jobId, bool scan = false, CancellationToken ct = default)
+    {
+        var client = scan ? _longHttp : _http;
+        using var resp = await client.GetAsync($"/api/jobs/{Uri.EscapeDataString(jobId)}/excluded-retention?scan={scan.ToString().ToLowerInvariant()}", ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+        return await resp.Content.ReadFromJsonAsync<ExcludedRetentionStatusDto>(JsonOptions, ct);
+    }
+
+    public async Task<PurgeExcludedResultDto?> PurgeExcludedNowAsync(string jobId, CancellationToken ct = default)
+    {
+        using var resp = await _longHttp.PostAsync($"/api/jobs/{Uri.EscapeDataString(jobId)}/purge-excluded", null, ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
+        return await resp.Content.ReadFromJsonAsync<PurgeExcludedResultDto>(JsonOptions, ct);
+    }
+
     public async Task SetBandwidthLimitAsync(string rate, CancellationToken ct = default)
     {
         using var resp = await _http.PostAsJsonAsync("/api/bwlimit", new BandwidthUpdateRequest { Rate = rate }, JsonOptions, ct);
@@ -175,6 +190,12 @@ public sealed class ServiceApiClient : IDisposable
         using var resp = await _http.PostAsync($"/api/service/startup?enabled={enabled}", null, ct);
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadFromJsonAsync<StartupToggleResponse>(JsonOptions, ct);
+    }
+
+    public async Task SetServiceModeAsync(BackgroundServiceMode mode, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync($"/api/service/mode?mode={mode}", null, ct);
+        await EnsureSuccessWithDetailAsync(resp, ct);
     }
 
     public async Task CompleteFirstRunAsync(CancellationToken ct = default)
