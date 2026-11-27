@@ -11,6 +11,7 @@ public sealed class JobScheduler
 {
     private readonly IAppConfigRepository _store;
     private readonly RcloneHybridEngine _engine;
+    private readonly ExcludedRetentionManager _retention;
     private readonly ServiceLogBuffer _log;
     private readonly SemaphoreSlim _executionLock = new(1, 1);
     private readonly ConcurrentQueue<(string JobId, bool DryRun, ExecutionStrategy? OverrideStrategy)> _manualQueue = new();
@@ -21,14 +22,21 @@ public sealed class JobScheduler
     private AppManagerConfig _config;
     private bool _startupJobsEvaluated;
 
-    public JobScheduler(IAppConfigRepository store, RcloneHybridEngine engine, ServiceLogBuffer log)
+    public JobScheduler(
+        IAppConfigRepository store,
+        RcloneHybridEngine engine,
+        ServiceLogBuffer log,
+        ExcludedRetentionManager? retentionManager = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         _log = log ?? throw new ArgumentNullException(nameof(log));
+        _retention = retentionManager ?? new ExcludedRetentionManager(store.BaseDirectory, log);
         _config = _store.LoadOrCreateDefault();
         InitializeNextRuns();
     }
+
+    public ExcludedRetentionManager RetentionManager => _retention;
 
     public AppManagerConfig GetConfigSnapshot()
     {
@@ -65,6 +73,16 @@ public sealed class JobScheduler
             _config.FirstRunCompleted = true;
             _store.Save(_config);
             _log.Info("Assistente inicial (First-Run Wizard) concluído.");
+        }
+    }
+
+    public void SetPreferredServiceMode(BackgroundServiceMode mode)
+    {
+        lock (_configLock)
+        {
+            _config.PreferredServiceMode = mode;
+            _store.Save(_config);
+            _log.Info($"Modo de serviço em segundo plano atualizado para: {mode}.");
         }
     }
 
@@ -303,6 +321,20 @@ public sealed class JobScheduler
                 }
 
                 _store.Save(_config);
+            }
+
+            if (success && !dryRun && !cancelled &&
+                jobSnapshot.Operation is RcloneOperation.Sync or RcloneOperation.Copy &&
+                _retention.ShouldAutoScanAfterSync(jobSnapshot, TimeSpan.FromHours(12)))
+            {
+                try
+                {
+                    await _retention.ScanAndEvaluateAsync(jobSnapshot, configSnapshot, autoPurgeExpired: true, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.Warn($"[{jobSnapshot.Name}] Avaliação automática de carência de excluídos falhou: {ex.Message}");
+                }
             }
         }
         finally

@@ -47,6 +47,14 @@ public enum JobRunStatus
     Cancelled
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum BackgroundServiceMode
+{
+    UserStartup,
+    WindowsService,
+    ManualOnly
+}
+
 public sealed class JobSchedule
 {
     public bool IsScheduled { get; set; } = true;
@@ -70,6 +78,8 @@ public sealed class SyncJob
 
     public string FilterFilePath { get; set; } = string.Empty;
     public FilterRuleMode FilterMode { get; set; } = FilterRuleMode.AutoDetect;
+    public bool EnableExcludedGraceRetention { get; set; } = true;
+    public int ExcludedRetentionDays { get; set; } = 30;
 
     public string MaxSize { get; set; } = string.Empty;
     public string BandwidthLimit { get; set; } = string.Empty;

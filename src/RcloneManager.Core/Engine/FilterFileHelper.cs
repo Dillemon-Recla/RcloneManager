@@ -138,6 +138,16 @@ public static partial class FilterFileHelper
             var trimmed = item.Trim();
             if (trimmed.StartsWith('#') || trimmed.StartsWith(';'))
                 continue;
+
+            // Garante que - **/.*/** também cubra pastas/arquivos ocultos na raiz (- .*/** e - .*)
+            if (trimmed is "- **/.*/**" or "- **/.*")
+            {
+                if (seenRules.Add("- .*/**"))
+                    sb.AppendLine("- .*/**");
+                if (seenRules.Add("- .*"))
+                    sb.AppendLine("- .*");
+            }
+
             if (seenRules.Add(trimmed))
                 sb.AppendLine(trimmed);
         }
@@ -221,5 +231,100 @@ public static partial class FilterFileHelper
 
         File.WriteAllText(filePath, analysis.OptimizedContent, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return Analyze(filePath);
+    }
+
+    /// <summary>
+    /// Constrói um arquivo --filter-from invertido (complemento booleano exato First-Match-Wins)
+    /// que seleciona APENAS arquivos no destino que hoje estão EXCLUÍDOS pelo filtro original.
+    /// </summary>
+    public static string? BuildInvertedExcludedOnlyFilterContent(string filterFilePath, FilterRuleMode mode)
+    {
+        var analysis = Analyze(filterFilePath);
+        if (!analysis.FileExists)
+            return null;
+
+        var chosenMode = mode == FilterRuleMode.AutoDetect ? analysis.RecommendedMode : mode;
+        var sb = new StringBuilder();
+        sb.AppendLine("# Filtro invertido automático (seleciona apenas itens excluídos pelo filtro principal)");
+
+        if (chosenMode == FilterRuleMode.ExcludeFrom)
+        {
+            var rawLines = File.ReadAllLines(filterFilePath);
+            var addedAny = false;
+            foreach (var raw in rawLines)
+            {
+                var trimmed = raw.Trim();
+                if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#') || trimmed.StartsWith(';'))
+                    continue;
+                if (InlineMaxSizeRegex().IsMatch(trimmed))
+                    continue;
+
+                var pattern = trimmed.StartsWith("- ", StringComparison.Ordinal)
+                    ? trimmed[2..].Trim()
+                    : (trimmed.StartsWith("+ ", StringComparison.Ordinal) ? string.Empty : trimmed);
+
+                if (string.IsNullOrEmpty(pattern))
+                    continue;
+
+                sb.AppendLine("+ " + pattern);
+                addedAny = true;
+            }
+
+            if (!addedAny)
+                return null;
+
+            sb.AppendLine("- *");
+            return sb.ToString();
+        }
+
+        var sourceContent = analysis.Warnings.Count > 0
+            ? analysis.OptimizedContent
+            : File.ReadAllText(filterFilePath);
+
+        var lines = sourceContent.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var hasExplicitCatchAll = false;
+        var ruleCount = 0;
+
+        foreach (var raw in lines)
+        {
+            var trimmed = raw.Trim();
+            if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#') || trimmed.StartsWith(';'))
+                continue;
+            if (InlineMaxSizeRegex().IsMatch(trimmed))
+                continue;
+
+            if (trimmed == "- *")
+            {
+                sb.AppendLine("+ *");
+                hasExplicitCatchAll = true;
+                ruleCount++;
+            }
+            else if (trimmed == "+ *")
+            {
+                sb.AppendLine("- *");
+                hasExplicitCatchAll = true;
+                ruleCount++;
+            }
+            else if (trimmed.StartsWith("- ", StringComparison.Ordinal))
+            {
+                sb.AppendLine("+ " + trimmed[2..]);
+                ruleCount++;
+            }
+            else if (trimmed.StartsWith("+ ", StringComparison.Ordinal))
+            {
+                sb.AppendLine("- " + trimmed[2..]);
+                ruleCount++;
+            }
+        }
+
+        if (ruleCount == 0)
+            return null;
+
+        // Em --filter-from, a regra implícita final do Rclone é '+ *' (incluir o restante);
+        // portanto no filtro invertido o restante não listado deve ser protegido ('- *').
+        if (!hasExplicitCatchAll)
+            sb.AppendLine("- *");
+
+        return sb.ToString();
     }
 }

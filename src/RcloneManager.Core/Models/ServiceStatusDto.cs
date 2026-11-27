@@ -18,6 +18,7 @@ public sealed class AppManagerConfig
     public int PersistentRcdPort { get; set; } = 5572;
     public bool AutoStartRcdDaemon { get; set; } = true;
     public string GlobalBandwidthLimit { get; set; } = "off";
+    public BackgroundServiceMode PreferredServiceMode { get; set; } = BackgroundServiceMode.UserStartup;
     public List<SyncJob> Jobs { get; set; } = new();
 }
 
@@ -49,6 +50,9 @@ public sealed class ServiceStatusDto
     public int RcDaemonPort { get; set; }
     public string CurrentBandwidthLimit { get; set; } = "off";
     public bool StartupWithWindowsEnabled { get; set; }
+    public bool WindowsServiceInstalled { get; set; }
+    public bool WindowsServiceRunning { get; set; }
+    public BackgroundServiceMode PreferredServiceMode { get; set; } = BackgroundServiceMode.UserStartup;
     public bool FirstRunCompleted { get; set; }
     public bool EncryptionKeyActive { get; set; }
     public string EncryptionKeyTarget { get; set; } = WindowsCredentialVault.DefaultTargetName;
@@ -111,4 +115,35 @@ public sealed class ExportedConfigBundle
     public string GlobalBandwidthLimit { get; set; } = "off";
     public List<ExportedRemoteBlueprint> Remotes { get; set; } = new();
     public List<SyncJob> Jobs { get; set; } = new();
+}
+
+public sealed class ExcludedFolderSummaryDto
+{
+    public string FolderName { get; set; } = string.Empty;
+    public int FileCount { get; set; }
+    public DateTime FirstDetectedUtc { get; set; }
+    public DateTime ExpiresAtUtc { get; set; }
+    public int DaysRemaining { get; set; }
+}
+
+public sealed class ExcludedRetentionStatusDto
+{
+    public string JobId { get; set; } = string.Empty;
+    public string JobName { get; set; } = string.Empty;
+    public string DestinationPath { get; set; } = string.Empty;
+    public bool RetentionEnabled { get; set; } = true;
+    public int GraceDays { get; set; } = 30;
+    public DateTime? LastScannedUtc { get; set; }
+    public int TotalTrackedFiles { get; set; }
+    public int ExpiredPurgedNowCount { get; set; }
+    public List<ExcludedFolderSummaryDto> TopFolders { get; set; } = new();
+    public string StatusSummary { get; set; } = string.Empty;
+}
+
+public sealed class PurgeExcludedResultDto
+{
+    public bool Success { get; set; }
+    public int DeletedFilesCount { get; set; }
+    public List<string> AffectedTopFolders { get; set; } = new();
+    public string Message { get; set; } = string.Empty;
 }

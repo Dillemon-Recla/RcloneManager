@@ -23,9 +23,7 @@ var workDir = ServiceControlHelper.ResolveWorkspaceDirectory(args);
 if (args.Any(a => a.Equals("--install-service", StringComparison.OrdinalIgnoreCase)))
 {
     var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "RcloneManager.Service.exe");
-    var binPath = $"\"{exePath}\" --windows-service --workdir \"{workDir}\"";
-    var (code, output) = ServiceControlHelper.RunScCommand(
-        $"create {ServiceControlHelper.WindowsServiceName} binPath= \"{binPath.Replace("\"", "\\\"")}\" start= auto DisplayName= \"Rclone Manager Service\"");
+    var (code, output) = ServiceControlHelper.InstallAndStartWindowsService(exePath, workDir);
     Console.WriteLine(output);
     return code;
 }
@@ -33,6 +31,7 @@ if (args.Any(a => a.Equals("--install-service", StringComparison.OrdinalIgnoreCa
 if (args.Any(a => a.Equals("--uninstall-service", StringComparison.OrdinalIgnoreCase)))
 {
     ServiceControlHelper.RunScCommand($"stop {ServiceControlHelper.WindowsServiceName}");
+    Thread.Sleep(1000);
     var (code, output) = ServiceControlHelper.RunScCommand($"delete {ServiceControlHelper.WindowsServiceName}");
     Console.WriteLine(output);
     return code;
@@ -80,6 +79,7 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
     builder.Services.AddSingleton(configStore);
     builder.Services.AddSingleton<IConfigResetService>(resetService);
     builder.Services.AddSingleton(logBuffer);
+    builder.Services.AddSingleton(new ExcludedRetentionManager(resolvedWorkDir, logBuffer));
     builder.Services.AddSingleton<RcloneHybridEngine>();
     builder.Services.AddSingleton<JobScheduler>();
     builder.Services.AddHostedService<RcloneBackgroundWorker>();
@@ -97,6 +97,8 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
         var rcloneVersion = await engine.GetRcloneVersionAsync(cfg, ct);
         var (isVersionValid, _) = await engine.ValidatePinnedVersionAsync(cfg, ct);
 
+        var (winSvcInstalled, winSvcRunning) = ServiceControlHelper.GetWindowsServiceState();
+
         return Results.Ok(new ServiceStatusDto
         {
             ServiceRunning = true,
@@ -112,6 +114,9 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
             RcDaemonPort = engine.RcDaemonPort,
             CurrentBandwidthLimit = cfg.GlobalBandwidthLimit,
             StartupWithWindowsEnabled = ServiceControlHelper.IsStartupEnabled(),
+            WindowsServiceInstalled = winSvcInstalled,
+            WindowsServiceRunning = winSvcRunning,
+            PreferredServiceMode = cfg.PreferredServiceMode,
             FirstRunCompleted = cfg.FirstRunCompleted,
             EncryptionKeyActive = masterKeyStore.KeyExists(cfg.EncryptionKeyTarget),
             EncryptionKeyTarget = cfg.EncryptionKeyTarget,
@@ -176,6 +181,56 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
     {
         var stopped = scheduler.StopRunningJob(id);
         return Results.Ok(new { stopRequested = stopped });
+    });
+
+    app.MapGet("/api/jobs/{id}/excluded-retention", async (
+        string id,
+        bool? scan,
+        JobScheduler scheduler,
+        ExcludedRetentionManager retention,
+        CancellationToken ct) =>
+    {
+        var job = scheduler.GetJobs().FirstOrDefault(j => j.Id == id);
+        if (job == null)
+            return Results.NotFound(new { error = "Tarefa não encontrada." });
+
+        if (scan == true)
+        {
+            try
+            {
+                var cfg = scheduler.GetConfigSnapshot();
+                var live = await retention.ScanAndEvaluateAsync(job, cfg, autoPurgeExpired: true, ct);
+                return Results.Ok(live);
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(detail: ex.Message, statusCode: 500);
+            }
+        }
+
+        return Results.Ok(retention.GetCachedStatus(job));
+    });
+
+    app.MapPost("/api/jobs/{id}/purge-excluded", async (
+        string id,
+        JobScheduler scheduler,
+        ExcludedRetentionManager retention,
+        CancellationToken ct) =>
+    {
+        var job = scheduler.GetJobs().FirstOrDefault(j => j.Id == id);
+        if (job == null)
+            return Results.NotFound(new { error = "Tarefa não encontrada." });
+
+        try
+        {
+            var cfg = scheduler.GetConfigSnapshot();
+            var result = await retention.PurgeAllExcludedNowAsync(job, cfg, ct);
+            return Results.Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(detail: ex.Message, statusCode: 500);
+        }
     });
 
     app.MapPost("/api/bwlimit", async (BandwidthUpdateRequest req, JobScheduler scheduler, CancellationToken ct) =>
@@ -478,7 +533,27 @@ WebApplication BuildApp(string[] cliArgs, string resolvedWorkDir)
     {
         var cfg = scheduler.GetConfigSnapshot();
         ServiceControlHelper.SetStartupEnabled(enabled, cfg.WorkingDirectory);
+        scheduler.SetPreferredServiceMode(enabled ? BackgroundServiceMode.UserStartup : BackgroundServiceMode.ManualOnly);
         return Results.Ok(new { startupWithWindowsEnabled = ServiceControlHelper.IsStartupEnabled() });
+    });
+
+    app.MapPost("/api/service/mode", (BackgroundServiceMode mode, JobScheduler scheduler) =>
+    {
+        var cfg = scheduler.GetConfigSnapshot();
+        if (mode == BackgroundServiceMode.UserStartup)
+            ServiceControlHelper.SetStartupEnabled(true, cfg.WorkingDirectory);
+        else
+            ServiceControlHelper.SetStartupEnabled(false, cfg.WorkingDirectory);
+
+        scheduler.SetPreferredServiceMode(mode);
+        var (winSvcInstalled, winSvcRunning) = ServiceControlHelper.GetWindowsServiceState();
+        return Results.Ok(new
+        {
+            preferredServiceMode = mode,
+            startupWithWindowsEnabled = ServiceControlHelper.IsStartupEnabled(),
+            windowsServiceInstalled = winSvcInstalled,
+            windowsServiceRunning = winSvcRunning
+        });
     });
 
     app.MapPost("/api/service/shutdown", (IHostApplicationLifetime lifetime, ServiceLogBuffer log) =>

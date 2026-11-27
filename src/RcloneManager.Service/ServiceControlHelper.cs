@@ -111,4 +111,64 @@ public static class ServiceControlHelper
         proc.WaitForExit(10000);
         return (proc.ExitCode, (stdout + Environment.NewLine + stderr).Trim());
     }
+
+    public static (bool Installed, bool Running) GetWindowsServiceState()
+    {
+        try
+        {
+            var (code, output) = RunScCommand($"query {WindowsServiceName}");
+            if (code != 0)
+                return (false, false);
+
+            var running = output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase) ||
+                          output.Contains("4  RUNNING", StringComparison.OrdinalIgnoreCase);
+            return (true, running);
+        }
+        catch
+        {
+            return (false, false);
+        }
+    }
+
+    public static (int ExitCode, string Output) InstallAndStartWindowsService(string exePath, string workDir)
+    {
+        var sb = new StringBuilder();
+        var binPath = $"\"{exePath}\" --windows-service --workdir \"{workDir}\"";
+        var escapedBin = binPath.Replace("\"", "\\\"");
+
+        var (installed, running) = GetWindowsServiceState();
+        if (running)
+        {
+            var (_, stopOut) = RunScCommand($"stop {WindowsServiceName}");
+            sb.AppendLine(stopOut);
+            Thread.Sleep(1500);
+        }
+
+        int code;
+        string createOrConfigOut;
+        if (installed)
+        {
+            (code, createOrConfigOut) = RunScCommand(
+                $"config {WindowsServiceName} binPath= \"{escapedBin}\" start= auto DisplayName= \"Rclone Manager Service\"");
+        }
+        else
+        {
+            (code, createOrConfigOut) = RunScCommand(
+                $"create {WindowsServiceName} binPath= \"{escapedBin}\" start= auto DisplayName= \"Rclone Manager Service\"");
+        }
+        sb.AppendLine(createOrConfigOut);
+
+        if (code != 0)
+            return (code, sb.ToString().Trim());
+
+        RunScCommand($"description {WindowsServiceName} \"Agendador automático e motor híbrido de backups do RcloneManager.\"");
+        RunScCommand($"failure {WindowsServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/30000");
+
+        var (startCode, startOut) = RunScCommand($"start {WindowsServiceName}");
+        sb.AppendLine(startOut);
+
+        // Código 1056 significa que uma instância do serviço já está em execução
+        var finalCode = (startCode == 0 || startCode == 1056) ? 0 : startCode;
+        return (finalCode, sb.ToString().Trim());
+    }
 }

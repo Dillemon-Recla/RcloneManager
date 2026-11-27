@@ -34,6 +34,8 @@ public static class ConfigCloningExtensions
             DestinationPath = source.DestinationPath,
             FilterFilePath = source.FilterFilePath,
             FilterMode = source.FilterMode,
+            EnableExcludedGraceRetention = source.EnableExcludedGraceRetention,
+            ExcludedRetentionDays = source.ExcludedRetentionDays,
             MaxSize = source.MaxSize,
             BandwidthLimit = source.BandwidthLimit,
             SkipLinks = source.SkipLinks,
@@ -73,6 +75,7 @@ public static class ConfigCloningExtensions
             PersistentRcdPort = source.PersistentRcdPort,
             AutoStartRcdDaemon = source.AutoStartRcdDaemon,
             GlobalBandwidthLimit = source.GlobalBandwidthLimit,
+            PreferredServiceMode = source.PreferredServiceMode,
             Jobs = source.Jobs?.Select(j => j.Clone()).ToList() ?? new List<SyncJob>()
         };
     }

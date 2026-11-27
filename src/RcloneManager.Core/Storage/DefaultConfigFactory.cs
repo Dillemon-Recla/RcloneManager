@@ -54,7 +54,7 @@ public sealed class DefaultConfigFactory : IDefaultConfigFactory
             CopyLinks = false,
             DryRun = false,
             LogFilePath = logFile,
-            ExtraFlags = "--retries 3 --low-level-retries 5",
+            ExtraFlags = "--tpslimit 6 --tpslimit-burst 6 --drive-chunk-size 64M --retries 3 --low-level-retries 5",
             Strategy = ExecutionStrategy.HybridAuto,
             Schedule = new JobSchedule
             {

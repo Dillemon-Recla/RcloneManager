@@ -48,23 +48,59 @@ public sealed class WindowsCredentialMasterKeyStore : IMasterKeyStore
     [DllImport("advapi32.dll", EntryPoint = "CredFree", SetLastError = true)]
     private static extern void CredFree(IntPtr cred);
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DATA_BLOB
+    {
+        public int cbData;
+        public IntPtr pbData;
+    }
+
+    private const uint CryptProtectUiForbidden = 0x1;
+    private const uint CryptProtectLocalMachine = 0x4;
+
+    [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CryptProtectData(
+        ref DATA_BLOB pDataIn,
+        string? szDataDescr,
+        IntPtr pOptionalEntropy,
+        IntPtr pvReserved,
+        IntPtr pPromptStruct,
+        uint dwFlags,
+        out DATA_BLOB pDataOut);
+
+    [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CryptUnprotectData(
+        ref DATA_BLOB pDataIn,
+        IntPtr ppszDataDescr,
+        IntPtr pOptionalEntropy,
+        IntPtr pvReserved,
+        IntPtr pPromptStruct,
+        uint dwFlags,
+        out DATA_BLOB pDataOut);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LocalFree(IntPtr hMem);
+
     public bool KeyExists(string? targetName = null)
     {
         var target = ResolveTarget(targetName);
         lock (VaultLock)
         {
-            if (!CredRead(target, CredTypeGeneric, 0, out var credPtr))
-                return false;
+            if (CredRead(target, CredTypeGeneric, 0, out var credPtr))
+            {
+                try
+                {
+                    var cred = Marshal.PtrToStructure<CREDENTIAL>(credPtr);
+                    if (cred.CredentialBlobSize == KeyLengthBytes && cred.CredentialBlob != IntPtr.Zero)
+                        return true;
+                }
+                finally
+                {
+                    CredFree(credPtr);
+                }
+            }
 
-            try
-            {
-                var cred = Marshal.PtrToStructure<CREDENTIAL>(credPtr);
-                return cred.CredentialBlobSize == KeyLengthBytes && cred.CredentialBlob != IntPtr.Zero;
-            }
-            finally
-            {
-                CredFree(credPtr);
-            }
+            return TryReadMachineMirror(target) != null;
         }
     }
 
@@ -82,6 +118,7 @@ public sealed class WindowsCredentialMasterKeyStore : IMasterKeyStore
                     {
                         var existing = new byte[KeyLengthBytes];
                         Marshal.Copy(cred.CredentialBlob, existing, 0, KeyLengthBytes);
+                        TryWriteMachineMirror(existing, target);
                         wasCreated = false;
                         return existing;
                     }
@@ -92,8 +129,17 @@ public sealed class WindowsCredentialMasterKeyStore : IMasterKeyStore
                 }
             }
 
+            var mirrored = TryReadMachineMirror(target);
+            if (mirrored is { Length: KeyLengthBytes })
+            {
+                try { WriteKeyInternal(mirrored, target); } catch { }
+                wasCreated = false;
+                return mirrored;
+            }
+
             var newKey = RandomNumberGenerator.GetBytes(KeyLengthBytes);
             WriteKeyInternal(newKey, target);
+            TryWriteMachineMirror(newKey, target);
             wasCreated = true;
             return newKey;
         }
@@ -106,6 +152,7 @@ public sealed class WindowsCredentialMasterKeyStore : IMasterKeyStore
         {
             var newKey = RandomNumberGenerator.GetBytes(KeyLengthBytes);
             WriteKeyInternal(newKey, target);
+            TryWriteMachineMirror(newKey, target);
             return newKey;
         }
     }
@@ -115,7 +162,125 @@ public sealed class WindowsCredentialMasterKeyStore : IMasterKeyStore
         var target = ResolveTarget(targetName);
         lock (VaultLock)
         {
-            return CredDelete(target, CredTypeGeneric, 0);
+            var deletedMirror = TryDeleteMachineMirror(target);
+            var deletedCred = CredDelete(target, CredTypeGeneric, 0);
+            return deletedCred || deletedMirror;
+        }
+    }
+
+    private static string GetMachineMirrorFilePath(string target)
+    {
+        var sanitized = new string(target.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RcloneManager");
+        return Path.Combine(dir, $"vault_{sanitized}.dpapi");
+    }
+
+    private static void TryWriteMachineMirror(byte[] key, string target)
+    {
+        try
+        {
+            var filePath = GetMachineMirrorFilePath(target);
+            var dir = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+
+            var inPtr = Marshal.AllocHGlobal(key.Length);
+            try
+            {
+                Marshal.Copy(key, 0, inPtr, key.Length);
+                var dataIn = new DATA_BLOB { cbData = key.Length, pbData = inPtr };
+                if (CryptProtectData(ref dataIn, "RcloneManager.ServiceKey", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                        CryptProtectUiForbidden | CryptProtectLocalMachine, out var dataOut))
+                {
+                    try
+                    {
+                        var encrypted = new byte[dataOut.cbData];
+                        Marshal.Copy(dataOut.pbData, encrypted, 0, dataOut.cbData);
+                        File.WriteAllBytes(filePath, encrypted);
+                    }
+                    finally
+                    {
+                        if (dataOut.pbData != IntPtr.Zero)
+                            LocalFree(dataOut.pbData);
+                    }
+                }
+            }
+            finally
+            {
+                for (var i = 0; i < key.Length; i++)
+                    Marshal.WriteByte(inPtr, i, 0);
+                Marshal.FreeHGlobal(inPtr);
+            }
+        }
+        catch
+        {
+            // Espelho DPAPI LocalMachine é auxiliar para execução sob conta SYSTEM (WinService)
+        }
+    }
+
+    private static byte[]? TryReadMachineMirror(string target)
+    {
+        try
+        {
+            var filePath = GetMachineMirrorFilePath(target);
+            if (!File.Exists(filePath))
+                return null;
+
+            var encrypted = File.ReadAllBytes(filePath);
+            if (encrypted.Length == 0)
+                return null;
+
+            var inPtr = Marshal.AllocHGlobal(encrypted.Length);
+            try
+            {
+                Marshal.Copy(encrypted, 0, inPtr, encrypted.Length);
+                var dataIn = new DATA_BLOB { cbData = encrypted.Length, pbData = inPtr };
+                if (!CryptUnprotectData(ref dataIn, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                        CryptProtectUiForbidden | CryptProtectLocalMachine, out var dataOut))
+                {
+                    return null;
+                }
+
+                try
+                {
+                    if (dataOut.cbData != KeyLengthBytes || dataOut.pbData == IntPtr.Zero)
+                        return null;
+
+                    var plain = new byte[KeyLengthBytes];
+                    Marshal.Copy(dataOut.pbData, plain, 0, KeyLengthBytes);
+                    return plain;
+                }
+                finally
+                {
+                    if (dataOut.pbData != IntPtr.Zero)
+                        LocalFree(dataOut.pbData);
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(inPtr);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool TryDeleteMachineMirror(string target)
+    {
+        try
+        {
+            var filePath = GetMachineMirrorFilePath(target);
+            if (!File.Exists(filePath))
+                return false;
+
+            File.Delete(filePath);
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
