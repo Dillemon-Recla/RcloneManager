@@ -132,6 +132,24 @@ Se o **RcloneManager** facilita sua rotina de backups e sincronizações, você 
 
 ---
 
+## Code Signing Policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- **Committers, Reviewers, and Approvers:** [@Dillemon-Recla](https://github.com/Dillemon-Recla) (autor e mantenedor do projeto; todas as releases oficiais são compiladas exclusivamente em runners hospedados pelo GitHub a partir de commits revisados no repositório).
+
+---
+
+## Política de Privacidade / Privacy Policy
+
+*This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.*
+
+O **RcloneManager** não coleta telemetria, métricas de uso ou dados pessoais. As únicas conexões externas realizadas são:
+- **GitHub Releases e Downloads Oficiais do Rclone (`github.com`, `api.github.com`, `downloads.rclone.org`):** usadas exclusivamente para verificar/baixar a versão travada do `rclone.exe` e atualizações opcionais do aplicativo (desativáveis nas configurações).
+- **Serviços de Armazenamento Configurados pelo Usuário:** acessados diretamente pelo binário oficial `rclone.exe` conforme as contas e agendamentos definidos pelo próprio usuário.
+
+---
+
 ## Licença
 
 Distribuído sob a licença **MIT**. Consulte [LICENSE](LICENSE) para mais detalhes.
