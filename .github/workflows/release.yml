@@ -19,13 +19,18 @@ on:
         description: 'Tag especifica opcional (deixe vazio para numerar automaticamente)'
         required: false
         default: ''
+      publish_release:
+        description: 'Publicar no GitHub Releases (desmarque para testar apenas a assinatura no SignPath)'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
   build-and-release:
-    name: Build Portable ZIP & Publish GitHub Release
+    name: Build, Sign & Publish Portable Release
     runs-on: windows-latest
 
     steps:
@@ -39,36 +44,45 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Resolve version and tag
+      - name: Resolve version, tag and SignPath settings
         id: meta
         shell: pwsh
+        env:
+          SP_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SP_ORG_SECRET: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          SP_ORG_VAR: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SP_PROJECT_VAR: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SP_POLICY_VAR: ${{ vars.SIGNPATH_POLICY_SLUG }}
         run: |
           if ("${{ github.event_name }}" -eq "push") {
             $tag = "${{ github.ref_name }}".Trim()
-          } elseif (-not [string]::IsNullOrWhiteSpace("${{ inputs.tag }}")) {
-            $tag = "${{ inputs.tag }}".Trim()
+            $publishRelease = "true"
           } else {
-            # Numeracao automatica baseada na ultima tag v*.*.* existente no repositorio
-            $existingTags = git tag -l "v*.*.*"
-            $parsed = @()
-            foreach ($t in $existingTags) {
-              $clean = $t.TrimStart('v', 'V').Split('-')[0]
-              try {
-                $parsed += [PSCustomObject]@{ Raw = $t; Ver = [version]$clean }
-              } catch { }
-            }
-
-            if ($parsed.Count -eq 0) {
-              $tag = "v1.0.0"
+            $publishRelease = if ("${{ inputs.publish_release }}" -eq "false") { "false" } else { "true" }
+            if (-not [string]::IsNullOrWhiteSpace("${{ inputs.tag }}")) {
+              $tag = "${{ inputs.tag }}".Trim()
             } else {
-              $latest = ($parsed | Sort-Object Ver -Descending | Select-Object -First 1).Ver
-              $bump = "${{ inputs.bump }}"
-              switch ($bump) {
-                "major" { $next = [version]::new($latest.Major + 1, 0, 0) }
-                "minor" { $next = [version]::new($latest.Major, $latest.Minor + 1, 0) }
-                default { $next = [version]::new($latest.Major, $latest.Minor, [Math]::Max(0, $latest.Build) + 1) }
+              $existingTags = git tag -l "v*.*.*"
+              $parsed = @()
+              foreach ($t in $existingTags) {
+                $clean = $t.TrimStart('v', 'V').Split('-')[0]
+                try {
+                  $parsed += [PSCustomObject]@{ Raw = $t; Ver = [version]$clean }
+                } catch { }
               }
-              $tag = "v$($next.Major).$($next.Minor).$($next.Build)"
+
+              if ($parsed.Count -eq 0) {
+                $tag = "v1.0.0"
+              } else {
+                $latest = ($parsed | Sort-Object Ver -Descending | Select-Object -First 1).Ver
+                $bump = "${{ inputs.bump }}"
+                switch ($bump) {
+                  "major" { $next = [version]::new($latest.Major + 1, 0, 0) }
+                  "minor" { $next = [version]::new($latest.Major, $latest.Minor + 1, 0) }
+                  default { $next = [version]::new($latest.Major, $latest.Minor, [Math]::Max(0, $latest.Build) + 1) }
+                }
+                $tag = "v$($next.Major).$($next.Minor).$($next.Build)"
+              }
             }
           }
 
@@ -77,9 +91,19 @@ jobs:
           }
 
           $version = $tag.TrimStart('v', 'V').Split('-')[0]
+          $orgId = if (-not [string]::IsNullOrWhiteSpace($env:SP_ORG_SECRET)) { $env:SP_ORG_SECRET.Trim() } else { "$($env:SP_ORG_VAR)".Trim() }
+          $projectSlug = if (-not [string]::IsNullOrWhiteSpace($env:SP_PROJECT_VAR)) { $env:SP_PROJECT_VAR.Trim() } else { "RcloneManager" }
+          $policySlug = if (-not [string]::IsNullOrWhiteSpace($env:SP_POLICY_VAR)) { $env:SP_POLICY_VAR.Trim() } else { "test-signing" }
+          $signEnabled = (-not [string]::IsNullOrWhiteSpace($env:SP_TOKEN)) -and (-not [string]::IsNullOrWhiteSpace($orgId))
+
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Publicando tag=$tag (Version=$version)"
+          "publish_release=$publishRelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sign_enabled=$($signEnabled.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sp_org_id=$orgId" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sp_project_slug=$projectSlug" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sp_policy_slug=$policySlug" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Build tag=$tag | Version=$version | SignPath=$signEnabled (project=$projectSlug, policy=$policySlug) | PublishRelease=$publishRelease"
 
       - name: Publish RcloneManager (win-x64 portable)
         shell: pwsh
@@ -88,7 +112,6 @@ jobs:
           $outDir = "${{ runner.temp }}\RcloneManager-win-x64"
           New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
-          # Publica o Servico e a Interface na mesma pasta portatil compartilhando o runtime
           dotnet publish src/RcloneManager.Service/RcloneManager.Service.csproj `
             -c Release -r win-x64 --self-contained true `
             -p:Version=$ver -p:DebugType=None -p:DebugSymbols=false `
@@ -104,18 +127,57 @@ jobs:
           if (Test-Path "README.en.md") { Copy-Item "README.en.md" -Destination $outDir -Force }
           if (Test-Path "docs") { Copy-Item "docs" -Destination (Join-Path $outDir "docs") -Recurse -Force }
 
-      - name: Create ZIP package and SHA256SUMS.txt
+      - name: Upload unsigned artifact for SignPath
+        if: steps.meta.outputs.sign_enabled == 'true'
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: RcloneManager-unsigned-win-x64
+          path: ${{ runner.temp }}\RcloneManager-win-x64\*
+          include-hidden-files: true
+
+      - name: Submit signing request to SignPath
+        if: steps.meta.outputs.sign_enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ steps.meta.outputs.sp_org_id }}
+          project-slug: ${{ steps.meta.outputs.sp_project_slug }}
+          signing-policy-slug: ${{ steps.meta.outputs.sp_policy_slug }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}\RcloneManager-signed
+
+      - name: Create final ZIP package and SHA256SUMS.txt
         id: pkg
         shell: pwsh
         run: |
           $tag = "${{ steps.meta.outputs.tag }}"
-          $outDir = "${{ runner.temp }}\RcloneManager-win-x64"
+          $unsignedDir = "${{ runner.temp }}\RcloneManager-win-x64"
+          $signedDir = "${{ runner.temp }}\RcloneManager-signed"
           $distDir = "${{ runner.temp }}\dist"
           New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 
           $zipName = "RcloneManager-$tag-win-x64.zip"
           $zipPath = Join-Path $distDir $zipName
-          Compress-Archive -Path "$outDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+
+          if ("${{ steps.meta.outputs.sign_enabled }}" -eq "true" -and (Test-Path $signedDir)) {
+            $signedUiExe = Join-Path $signedDir "RcloneManager.UI.exe"
+            $nestedZip = Get-ChildItem -Path $signedDir -Filter "*.zip" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+
+            if (Test-Path $signedUiExe) {
+              Write-Host "Verificando assinatura Authenticode dos binarios retornados pelo SignPath..."
+              Get-AuthenticodeSignature $signedUiExe, (Join-Path $signedDir "RcloneManager.Service.exe") | Format-Table Path, Status, SignerCertificate -AutoSize
+              Compress-Archive -Path "$signedDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+            } elseif ($nestedZip) {
+              Copy-Item -Path $nestedZip.FullName -Destination $zipPath -Force
+            } else {
+              throw "Diretorio assinado pelo SignPath nao contem RcloneManager.UI.exe nem pacote .zip."
+            }
+          } else {
+            Write-Host "SignPath nao configurado nos Secrets; empacotando build sem assinatura."
+            Compress-Archive -Path "$unsignedDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+          }
 
           $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
           $sumsPath = Join-Path $distDir "SHA256SUMS.txt"
@@ -125,7 +187,14 @@ jobs:
           "sums_path=$sumsPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Gerado $zipName (SHA-256: $hash)"
 
+      - name: Upload final release package as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RcloneManager-${{ steps.meta.outputs.tag }}-release-bundle
+          path: ${{ runner.temp }}\dist\*
+
       - name: Publish GitHub Release
+        if: steps.meta.outputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
